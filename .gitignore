@@ -22,9 +22,11 @@ checkpoints/
 *.bin
 *.safetensors
 
-# Training data (large, downloaded separately - see README)
+# Training data (large, regenerable with scripts/fetch_corpus.py)
 data/books/
 data/*.txt
+data/train/
+data/val/
 
 # Logs
 *.log

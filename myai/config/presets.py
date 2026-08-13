@@ -349,6 +349,12 @@ MODEL_PRESETS = {
     "mini": dict(d_model=256, n_heads=4, n_kv_heads=2, n_layers=6, d_ff=1024, max_seq_len=512),
     "small": dict(d_model=512, n_heads=8, n_kv_heads=4, n_layers=8, d_ff=2048, max_seq_len=1024),
     "base": dict(d_model=768, n_heads=12, n_kv_heads=4, n_layers=12, d_ff=3072, max_seq_len=1024),
+    # ~1B parameters at vocab 8192. The architecture scales to this cleanly, but
+    # the hardware requirement is a step change, not a longer wait:
+    #   weights 3.9 GB + grads 3.9 GB + Adam m/v 7.9 GB = 15.7 GB of fp32 state
+    #   before a single activation, so it needs a 40 GB+ accelerator.
+    # See docs/SCALING.md for the measured basis of those numbers.
+    "xl": dict(d_model=1536, n_heads=12, n_kv_heads=4, n_layers=28, d_ff=6144, max_seq_len=1024),
 }
 
 
