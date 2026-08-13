@@ -88,6 +88,7 @@ class TrainingLoop:
         max_steps: Optional[int] = None,
         max_epochs: Optional[int] = None,
         on_step_end: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+        on_eval: Optional[Callable[[int, float, bool], None]] = None,
     ):
         self._model = model
         self._optimizer = optimizer
@@ -103,6 +104,7 @@ class TrainingLoop:
         self._max_steps = max_steps
         self._max_epochs = max_epochs
         self._on_step_end = on_step_end
+        self._on_eval = on_eval
 
         # Built once and reused: constructing it per batch was pure overhead.
         self._batch_builder = BatchBuilder(
@@ -213,8 +215,11 @@ class TrainingLoop:
             ):
                 val_loss = self.evaluate(val_dataset, self._eval_steps)
                 self._model.train()
-                if val_loss < self._best_loss:
+                is_best = val_loss < self._best_loss
+                if is_best:
                     self._best_loss = val_loss
+                if self._on_eval is not None:
+                    self._on_eval(self._global_step, val_loss, is_best)
 
             if self._max_steps and self._global_step >= self._max_steps:
                 break

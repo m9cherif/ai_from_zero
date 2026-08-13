@@ -14,6 +14,7 @@ setup(
     ],
     extras_require={
         "dev": ["pytest>=7.0"],
+        "gui": ["PyQt6>=6.5"],
     },
     entry_points={
         "console_scripts": [

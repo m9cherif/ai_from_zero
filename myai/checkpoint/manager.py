@@ -34,7 +34,7 @@ class CheckpointManager:
     def _checkpoint_path(self, step: int) -> Path:
         return self._save_dir / f"checkpoint_step_{step}.pt"
 
-    def _best_checkpoint_path(self) -> Path:
+    def best_checkpoint_path(self) -> Path:
         return self._save_dir / "checkpoint_best.pt"
 
     def _latest_checkpoint_path(self) -> Path:
@@ -50,6 +50,7 @@ class CheckpointManager:
         rng_state=None,
         tokenizer_state=None,
         step: Optional[int] = None,
+        is_best: bool = False,
     ) -> str:
         """Save a checkpoint.
 
@@ -62,6 +63,7 @@ class CheckpointManager:
             rng_state: Random state for reproducibility
             tokenizer_state: Optional tokenizer state
             step: Current training step (overrides auto-detection)
+            is_best: Also mirror this checkpoint to ``checkpoint_best.pt``
 
         Returns:
             Path to saved checkpoint
@@ -89,6 +91,13 @@ class CheckpointManager:
         latest_path = self._latest_checkpoint_path()
         shutil.copyfile(str(path), str(latest_path))
 
+        # "best" is a copy rather than a pointer so it survives rotation: the
+        # step file it came from is eventually deleted by _cleanup_old_checkpoints,
+        # and the best model is usually not among the last N.
+        if is_best:
+            shutil.copyfile(str(path), str(self.best_checkpoint_path()))
+            logger.info(f"New best checkpoint at step {step}")
+
         self._cleanup_old_checkpoints()
 
         self._last_save_step = step
@@ -109,6 +118,13 @@ class CheckpointManager:
         latest = self._latest_checkpoint_path()
         if latest.exists():
             return self.load(str(latest))
+        return None
+
+    def resume_from_best(self) -> Optional[Dict[str, Any]]:
+        """Load the best-validation-loss checkpoint if one was saved."""
+        best = self.best_checkpoint_path()
+        if best.exists():
+            return self.load(str(best))
         return None
 
     @staticmethod

@@ -183,6 +183,7 @@ class Trainer:
             max_steps=config.max_steps,
             max_epochs=config.num_epochs,
             on_step_end=self._on_step_end,
+            on_eval=self._on_eval,
         )
 
         if config.checkpoint.resume_from:
@@ -193,7 +194,12 @@ class Trainer:
         if self._checkpoint_manager.should_save(step):
             self.save_checkpoint(step=step)
 
-    def save_checkpoint(self, step: Optional[int] = None) -> str:
+    def _on_eval(self, step: int, val_loss: float, is_best: bool) -> None:
+        """Eval-level hook: persist the best-validation-loss model."""
+        if is_best and self._config.checkpoint.save_best:
+            self.save_checkpoint(step=step, is_best=True)
+
+    def save_checkpoint(self, step: Optional[int] = None, is_best: bool = False) -> str:
         """Persist model, optimizer, scheduler, loop and RNG state."""
         tokenizer_state = None
         if self._tokenizer is not None and hasattr(self._tokenizer, "to_dict"):
@@ -208,6 +214,7 @@ class Trainer:
             rng_state=get_default_rng().capture_state(),
             tokenizer_state=tokenizer_state,
             step=step,
+            is_best=is_best,
         )
 
     def train(

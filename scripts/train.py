@@ -73,7 +73,9 @@ def build_config(args, vocab_size: int) -> TrainConfig:
         },
         max_steps=args.steps,
         num_epochs=args.epochs,
-        eval_every_steps=max(args.steps // 4, 100),
+        # Floored at 1, not 100: a short run with --val-data would otherwise
+        # never evaluate and never write a best checkpoint.
+        eval_every_steps=max(args.steps // 4, 1),
         eval_steps=20,
         seed=args.seed,
     )
@@ -83,6 +85,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="tiny")
     parser.add_argument("--data", nargs="+", default=["data"])
+    parser.add_argument(
+        "--val-data", nargs="+", default=None,
+        help="Held-out paths. Without these no evaluation runs and no "
+             "checkpoint_best.pt is written.",
+    )
     parser.add_argument("--tokenizer", default="output/tokenizer.json")
     parser.add_argument("--output", default="output/checkpoints")
     parser.add_argument("--steps", type=int, default=2000)
@@ -131,10 +138,24 @@ def main() -> None:
     )
     dataset.discover_files()
 
+    val_dataset = None
+    if args.val_data:
+        val_dataset = StreamingDataset(
+            data_paths=args.val_data,
+            tokenizer=tokenizer,
+            max_seq_len=config.data.max_seq_len,
+            shuffle_buffer_size=config.data.shuffle_buffer_size,
+            pack_sequences=True,
+            seed=config.seed,
+        )
+        val_dataset.discover_files()
+        print(f"Validation every {config.eval_every_steps} steps; "
+              f"best model tracked in {os.path.join(args.output, 'checkpoint_best.pt')}")
+
     trainer = Trainer(config, tokenizer=tokenizer)
 
     start = time.time()
-    stats = trainer.train(dataset)
+    stats = trainer.train(dataset, val_dataset)
     elapsed = time.time() - start
 
     vocab = tokenizer.vocab_size

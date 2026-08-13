@@ -127,6 +127,57 @@ class TestTrainerEndToEnd:
         saved = trainer._checkpoint_manager.list_checkpoints()
         assert saved, "training must produce a checkpoint"
 
+    def test_best_checkpoint_written_when_validating(self, corpus_dir, tmp_path, tokenizer):
+        """save_best is a documented config flag; it has to actually produce a file."""
+        config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size, eval_every_steps=2, eval_steps=2)
+        dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+        val_dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+
+        trainer = Trainer(config, tokenizer=tokenizer)
+        trainer.train(dataset, val_dataset)
+
+        best_path = trainer._checkpoint_manager.best_checkpoint_path()
+        assert best_path.exists(), "validation ran, so a best checkpoint must exist"
+
+        restored = trainer._checkpoint_manager.resume_from_best()
+        assert restored is not None
+        assert math.isfinite(restored["loop_state"]["best_loss"])
+
+    def test_no_best_checkpoint_without_validation(self, corpus_dir, tmp_path, tokenizer):
+        config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size)
+        dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+
+        trainer = Trainer(config, tokenizer=tokenizer)
+        trainer.train(dataset)
+
+        assert not trainer._checkpoint_manager.best_checkpoint_path().exists()
+
+    def test_save_best_disabled_writes_no_best(self, corpus_dir, tmp_path, tokenizer):
+        config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size, eval_every_steps=2, eval_steps=2)
+        config.checkpoint.save_best = False
+        dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+        val_dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+
+        trainer = Trainer(config, tokenizer=tokenizer)
+        trainer.train(dataset, val_dataset)
+
+        assert not trainer._checkpoint_manager.best_checkpoint_path().exists()
+
     def test_checkpoint_roundtrip_restores_weights(self, corpus_dir, tmp_path, tokenizer):
         config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size)
         dataset = StreamingDataset(

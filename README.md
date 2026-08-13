@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-136 tests passing · ~9,000 lines · CPU and GPU
+143 tests passing · ~9,000 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -25,7 +25,8 @@ python scripts/train.py --preset tiny --steps 2000
 ```
 
 ```bash
-python scripts/chat.py
+python scripts/chat.py                 # terminal
+python scripts/gui.py                  # desktop window (pip install PyQt6)
 ```
 
 Put any `.txt` files in `data/` first — the training script reads everything it
@@ -128,8 +129,8 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        136 tests
-scripts/        build_tokenizer.py · train.py · chat.py · benchmark.py
+  tests/        143 tests
+scripts/        build_tokenizer.py · train.py · chat.py · gui.py · benchmark.py
 ```
 
 ## Tokenizers
@@ -160,6 +161,18 @@ and RNG state, and resume exactly:
 python scripts/train.py --resume output/checkpoints/checkpoint_latest.pt
 ```
 
+Pass held-out files to evaluate during training and track the best model:
+
+```bash
+python scripts/train.py --preset small --steps 20000 --data data/train --val-data data/val
+```
+
+Rotation keeps the last N step files. `checkpoint_latest.pt` always mirrors the
+most recent save; with `--val-data`, `checkpoint_best.pt` mirrors the lowest
+validation loss seen. Both are byte copies rather than pointers, so the
+best model survives even after the step file it came from is rotated away — which
+is the normal case, since the best model is rarely among the last N.
+
 The library API is equivalent:
 
 ```python
@@ -175,6 +188,24 @@ config.model.vocab_size = tokenizer.vocab_size
 dataset = StreamingDataset(["data"], tokenizer, max_seq_len=1024)
 Trainer(config, tokenizer=tokenizer).train(dataset)
 ```
+
+## Chatting with the model
+
+```bash
+python scripts/chat.py                     # terminal
+python scripts/gui.py                      # desktop window
+python scripts/gui.py --checkpoint output/checkpoints/checkpoint_best.pt
+```
+
+Both load the newest checkpoint by default and stream token by token. The desktop
+window needs `pip install PyQt6` — nothing else in the project imports it. It puts
+the transcript on the left and the sampling controls on the right, so temperature,
+top-k, top-p, min-p, repetition penalty and length can be changed between turns
+without restarting. Enter sends, Esc stops generation mid-stream, Ctrl+L clears.
+Generation runs on a worker thread, so the window stays responsive on CPU.
+
+These are base models trained on plain text — they continue a prompt rather than
+answer it. "To be, or" works; "What is the capital of France?" does not.
 
 ## Tests
 
@@ -195,6 +226,7 @@ silently wrong:
 - tied weights are one shared parameter, updated once
 - tokenizer round-trips are lossless
 - `Trainer` trains, checkpoints, and resumes to identical weights
+- the best-validation checkpoint survives rotation of the step files
 - loss actually decreases
 
 ## Requirements
