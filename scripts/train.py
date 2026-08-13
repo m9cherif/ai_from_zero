@@ -30,6 +30,11 @@ def build_config(args, vocab_size: int) -> TrainConfig:
     model["dropout"] = args.dropout
     if args.seq_len:
         model["max_seq_len"] = args.seq_len
+    if args.n_layers:
+        model["n_layers"] = args.n_layers
+    if args.d_model:
+        model["d_model"] = args.d_model
+        model["d_ff"] = args.d_model * 4
 
     return TrainConfig(
         model=model,
@@ -56,7 +61,7 @@ def build_config(args, vocab_size: int) -> TrainConfig:
         },
         checkpoint={
             "save_dir": args.output,
-            "save_every_steps": max(args.steps // 4, 100),
+            "save_every_steps": args.save_every or max(args.steps // 4, 100),
             "keep_last_n": 3,
         },
         logging={"log_every_steps": args.log_every},
@@ -85,6 +90,9 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--seq-len", type=int, default=None)
+    parser.add_argument("--n-layers", type=int, default=None, help="Override the preset's depth")
+    parser.add_argument("--d-model", type=int, default=None, help="Override the preset's width")
+    parser.add_argument("--save-every", type=int, default=None, help="Checkpoint interval in steps")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--device", default="auto")
