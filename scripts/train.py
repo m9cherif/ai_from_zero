@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 
 from myai.config.presets import MODEL_PRESETS, TrainConfig
-from myai.data.streaming import StreamingDataset
+from myai.data.streaming import PretokenizedDataset, StreamingDataset, TokenCache
 from myai.tokenizer import load_tokenizer
 from myai.train.engine import Trainer
 
@@ -100,6 +100,12 @@ def main() -> None:
     parser.add_argument("--n-layers", type=int, default=None, help="Override the preset's depth")
     parser.add_argument("--d-model", type=int, default=None, help="Override the preset's width")
     parser.add_argument("--save-every", type=int, default=None, help="Checkpoint interval in steps")
+    parser.add_argument(
+        "--cache-dir", default=None,
+        help="Tokenize the corpus once into this directory and train from the "
+             "cache. Removes per-epoch tokenization, which is a large share of "
+             "CPU step time.",
+    )
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--device", default="auto")
@@ -128,27 +134,33 @@ def main() -> None:
     if args.resume:
         config.checkpoint.resume_from = args.resume
 
-    dataset = StreamingDataset(
-        data_paths=config.data.data_paths,
-        tokenizer=tokenizer,
-        max_seq_len=config.data.max_seq_len,
-        shuffle_buffer_size=config.data.shuffle_buffer_size,
-        pack_sequences=True,
-        seed=config.seed,
-    )
-    dataset.discover_files()
-
-    val_dataset = None
-    if args.val_data:
-        val_dataset = StreamingDataset(
-            data_paths=args.val_data,
+    def build_dataset(paths, name):
+        if args.cache_dir:
+            cache = TokenCache.build(
+                paths, tokenizer, os.path.join(args.cache_dir, f"{name}.bin")
+            )
+            return PretokenizedDataset(
+                cache, max_seq_len=config.data.max_seq_len, seed=config.seed
+            )
+        stream = StreamingDataset(
+            data_paths=paths,
             tokenizer=tokenizer,
             max_seq_len=config.data.max_seq_len,
             shuffle_buffer_size=config.data.shuffle_buffer_size,
             pack_sequences=True,
             seed=config.seed,
         )
-        val_dataset.discover_files()
+        stream.discover_files()
+        return stream
+
+    dataset = build_dataset(config.data.data_paths, "train")
+    if args.cache_dir:
+        print(f"Train corpus: {dataset.n_tokens:,} tokens, "
+              f"{dataset.n_windows:,} windows of {config.data.max_seq_len}")
+
+    val_dataset = None
+    if args.val_data:
+        val_dataset = build_dataset(args.val_data, "val")
         print(f"Validation every {config.eval_every_steps} steps; "
               f"best model tracked in {os.path.join(args.output, 'checkpoint_best.pt')}")
 
