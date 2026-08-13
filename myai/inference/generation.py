@@ -167,7 +167,10 @@ class AutoregressiveGenerator:
 
         step_input = generated
         offset = 0
-        emitted = ""
+        # Seed with the decoded prompt so only newly generated text is yielded.
+        # Starting from "" would make the first chunk contain the prompt itself.
+        prompt_text = self._tokenizer.decode(generated[0].tolist(), skip_special_tokens=True)
+        emitted = prompt_text
 
         try:
             for _ in range(max_new_tokens):
@@ -193,8 +196,12 @@ class AutoregressiveGenerator:
                     emitted = full
                     yield chunk
 
-                if stop_sequences and any(s in emitted for s in stop_sequences):
-                    break
+                # Only the continuation can trigger a stop; a stop string that
+                # happens to appear in the prompt must not end generation at once.
+                if stop_sequences:
+                    continuation = emitted[len(prompt_text):]
+                    if any(s in continuation for s in stop_sequences):
+                        break
 
                 offset = cache.length
                 step_input = next_token
