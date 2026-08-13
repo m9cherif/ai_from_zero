@@ -17,21 +17,38 @@ pip install -r requirements.txt
 ```
 
 ```bash
-python scripts/build_tokenizer.py --type char
-```
-
-```bash
-python scripts/train.py --preset tiny --steps 2000
-```
-
-```bash
+python scripts/fetch_corpus.py                                    # ~49 MB of real text
+python scripts/build_tokenizer.py --type bpe --vocab-size 4096 --data 'data/train/*.txt'
+python scripts/train.py --preset mini --steps 5000 --data data/train --val-data data/val
 python scripts/chat.py                 # terminal
 python scripts/gui.py                  # desktop window (pip install PyQt6)
 ```
 
-Put any `.txt` files in `data/` first — the training script reads everything it
-finds there. The repository ships without a corpus; TinyShakespeare and the
-Project Gutenberg books used during development are excluded by `.gitignore`.
+The repository ships without a corpus — `scripts/fetch_corpus.py` downloads one.
+Any `.txt` files you drop in `data/` are picked up too.
+
+## Data
+
+`scripts/fetch_corpus.py` assembles a multi-domain corpus from sources that stay
+reachable behind restrictive proxies (everything comes from
+`raw.githubusercontent.com`, so it works where `huggingface.co` and
+`gutenberg.org` are blocked):
+
+| Source | Content |
+|---|---|
+| Project Gutenberg (GITenberg mirror) | ~34 works — Melville, Austen, Dostoevsky, Tolstoy, Shakespeare, Plato, Darwin, Einstein |
+| WikiText-2 | curated Wikipedia, the standard LM benchmark corpus |
+| Norvig `big.txt` | mixed reference prose |
+
+Gutenberg licence headers and footers are stripped, and validation documents are
+held out **whole**, so no text appears on both sides of the split:
+
+```
+downloaded    55.3 MB (39 documents)
+cleaned       48.8 MB (stripped 6.6 MB of boilerplate)
+train         43.3 MB
+val            5.4 MB (held-out documents)
+```
 
 ## Architecture
 
@@ -76,6 +93,14 @@ text = model.generate(prompt_ids, max_new_tokens=100,
 | `mini` | 256 | 6 | 4 (2) | 512 |
 | `small` | 512 | 8 | 8 (4) | 1024 |
 | `base` | 768 | 12 | 12 (4) | 1024 |
+| `xl` | 1536 | 28 | 12 (4) | 1024 |
+
+`xl` is ~982M parameters. The architecture scales to it unchanged, but fp32
+weights, gradients and the two AdamW moments come to **15.7 GB before a single
+activation**, so it needs a 40 GB+ accelerator — this is a hardware step change,
+not a longer wait. [`docs/SCALING.md`](docs/SCALING.md) has the measured
+arithmetic, the extrapolated training time, and why a 1B model is the wrong
+choice for a small token budget regardless of hardware.
 
 ## Performance
 
@@ -101,21 +126,37 @@ The hand-written attention path is the default so the project stays honest about
 being from scratch. `model.set_flash_attention(True)` switches to PyTorch's fused
 kernels; a test asserts both paths produce identical outputs.
 
-A note on what to expect: fused SDPA and `torch.compile` are **GPU**
-optimizations. On CPU with a small model they are break-even or slightly slower
-(measured 0.93x for SDPA on the `tiny` preset), because there is no memory-bandwidth
-wall to win back. The KV cache, fused optimizers, packing and vectorized sampling
-help everywhere. Gradient checkpointing costs ~28% step time by design.
+A note on what to expect: the KV cache, fused optimizers, packing and vectorized
+sampling help everywhere. Fused SDPA is hardware-dependent — it is a large win on
+GPU, and on CPU it ranges from a slight loss to a solid win depending on the
+machine (0.93x on one 4-core box, 1.34x on another). Measure it on your own
+hardware rather than trusting either number. Gradient checkpointing costs step
+time by design, in exchange for activation memory.
 
-Measured on a 4-thread CPU, `tiny` preset, batch 4 × 256 tokens:
+Measured on 4 Xeon cores @ 2.80GHz, `tiny` preset, batch 8 × 256 tokens:
 
 ```
-Training step        754 ms   (1,359 tokens/s)
-  fused SDPA         808 ms   (0.93x — GPU-oriented, no CPU win)
-  grad checkpoint   1048 ms   (0.72x, large activation-memory saving)
-Generation (48 tok)  916 ms with KV cache vs 1162 ms without (1.27x;
+Training step        106 ms   (19,251 tokens/s)
+  fused SDPA          80 ms   (1.34x)
+  grad checkpoint    121 ms   (0.88x, large activation-memory saving)
+Generation (64 tok)  117 ms with KV cache vs 197 ms without (1.69x;
                      the gap widens with longer contexts)
 ```
+
+Training throughput by preset, same machine, batch 8 × 256, vocab 2048:
+
+| Preset | Params | Steps/s | Tokens/s |
+|---|---|---|---|
+| `tiny` | 1.05M | 7.3 | 14,992 |
+| `mini` | 4.95M | 3.1 | 6,245 |
+| `small` | 24.7M | 0.90 | 1,835 |
+| `base` | 77.1M | 0.33 | 675 |
+
+Steps/s is not a property of the hardware alone — a step is whatever
+`batch × seq_len` you choose. On the `tiny` preset, batch 1 gives 30 steps/s and
+batch 32 gives 2.5, while tokens/s *rises* from 7,716 to 20,277 across that same
+range because larger batches amortize per-step overhead. Compare configurations
+by tokens/s; use steps/s only to estimate wall clock for a fixed step budget.
 
 ## Layout
 
