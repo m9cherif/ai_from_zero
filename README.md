@@ -36,18 +36,27 @@ reachable behind restrictive proxies (everything comes from
 
 | Source | Content |
 |---|---|
-| Project Gutenberg (GITenberg mirror) | ~34 works — Melville, Austen, Dostoevsky, Tolstoy, Shakespeare, Plato, Darwin, Einstein |
+| Project Gutenberg (GITenberg mirror) | ~100 works — Melville, Austen, Dickens, Dostoevsky, Tolstoy, Verne, Conrad, Shakespeare, Milton, Plato, Kant, Darwin, Einstein |
 | WikiText-2 | curated Wikipedia, the standard LM benchmark corpus |
 | Norvig `big.txt` | mixed reference prose |
 
 Gutenberg licence headers and footers are stripped, and validation documents are
-held out **whole**, so no text appears on both sides of the split:
+held out **whole**, so no text appears on both sides of the split. Titles that
+have moved or been renamed in the mirror are skipped rather than failing the run,
+so the exact total varies a little:
 
 ```
-downloaded    55.3 MB (39 documents)
-cleaned       48.8 MB (stripped 6.6 MB of boilerplate)
-train         43.3 MB
-val            5.4 MB (held-out documents)
+101 documents    89.6 MB cleaned
+train            84.2 MB   24,866,609 tokens
+val               5.4 MB    1,854,988 tokens (held out whole)
+```
+
+Tokenizing that corpus on every epoch costs more CPU than the model does, so
+`--cache-dir` tokenizes once into a memory-mapped array of ids and trains from
+that. Windows are exactly `max_seq_len`, so nothing is padded:
+
+```bash
+python scripts/train.py --cache-dir output/tokens --data data/train --val-data data/val
 ```
 
 ## Architecture
