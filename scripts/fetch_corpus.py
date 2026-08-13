@@ -26,7 +26,10 @@ SOURCES = [
     ("wikitext2_valid.txt", f"{RAW}/pytorch/examples/main/word_language_model/data/wikitext-2/valid.txt"),
     ("wikitext2_test.txt", f"{RAW}/pytorch/examples/main/word_language_model/data/wikitext-2/test.txt"),
     ("norvig_big.txt", f"{RAW}/dscape/spell/master/test/resources/big.txt"),
-    ("tinyshakespeare.txt", f"{RAW}/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"),
+    # TinyShakespeare is deliberately absent: it is an excerpt of the Complete
+    # Works (Gutenberg 100), which is a validation candidate. Including both put
+    # 20% of the validation document into the training set and made validation
+    # loss read better than it was.
 ]
 
 # Project Gutenberg: GITenberg mirrors each book at <Slug>_<id>/master/<id>.txt
@@ -133,6 +136,44 @@ def fetch(dest_dir, name, url):
     return name, True
 
 
+def check_contamination(train_dir: str, val_dir: str, samples: int = 40) -> float:
+    """Fraction of sampled validation lines that also appear in the training set.
+
+    A held-out document is only held out if its text is absent from training.
+    Public-domain corpora make this easy to get wrong - anthologies, excerpt
+    collections and "complete works" editions overlap constantly.
+    """
+    import random
+
+    val_text = "".join(
+        open(os.path.join(val_dir, n), encoding="utf-8", errors="replace").read()
+        for n in sorted(os.listdir(val_dir))
+    )
+    train_text = "".join(
+        open(os.path.join(train_dir, n), encoding="utf-8", errors="replace").read()
+        for n in sorted(os.listdir(train_dir))
+    )
+    # Both sides get the same whitespace normalisation, otherwise a probe taken
+    # across a line break can never match however much text is shared.
+    train_text = " ".join(train_text.split())
+
+    # Sample at random character offsets rather than by line. Line-based
+    # sampling with a length filter silently misses overlap in sources whose
+    # lines are short - play dialogue, verse - which is exactly where
+    # public-domain corpora overlap.
+    span = 80
+    if len(val_text) <= span:
+        return 0.0
+    random.seed(0)
+    hits = 0
+    for _ in range(samples):
+        start = random.randrange(0, len(val_text) - span)
+        probe = " ".join(val_text[start:start + span].split())
+        if probe and probe in train_text:
+            hits += 1
+    return hits / samples
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default="data", help="Corpus root")
@@ -193,6 +234,14 @@ def main() -> None:
           f"(stripped {(raw_bytes-clean_bytes)/1e6:.1f} MB of boilerplate)")
     print(f"  train        {(clean_bytes-val_bytes)/1e6:7.1f} MB -> {train_dir}")
     print(f"  val          {val_bytes/1e6:7.1f} MB -> {val_dir} ({n_val} held-out documents)")
+    overlap = check_contamination(train_dir, val_dir)
+    if overlap > 0.02:
+        print(f"\n  WARNING: {overlap:.0%} of sampled validation lines also appear in "
+              f"training.\n  Validation loss will read better than it is. Remove the "
+              f"overlapping source or hold out a different document.")
+    else:
+        print(f"  leakage check {overlap:.0%} of sampled val lines found in train")
+
     print(f"\nNext:  python scripts/build_tokenizer.py --type bpe --vocab-size 4096 "
           f"--data '{train_dir}/*.txt'")
 
