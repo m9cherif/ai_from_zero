@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-143 tests passing · ~9,000 lines · CPU and GPU
+154 tests passing · ~9,400 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -17,7 +17,7 @@ pip install -r requirements.txt
 ```
 
 ```bash
-python scripts/fetch_corpus.py                                    # ~49 MB of real text
+python scripts/fetch_corpus.py                                    # ~90 MB of real text
 python scripts/build_tokenizer.py --type bpe --vocab-size 4096 --data 'data/train/*.txt'
 python scripts/train.py --preset mini --steps 5000 --data data/train --val-data data/val
 python scripts/chat.py                 # terminal
@@ -179,8 +179,8 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        143 tests
-scripts/        build_tokenizer.py · train.py · chat.py · gui.py · benchmark.py
+  tests/        154 tests
+scripts/        fetch_corpus.py · build_tokenizer.py · train.py · evaluate.py · chat.py · gui.py · benchmark.py
 ```
 
 ## Tokenizers
