@@ -254,6 +254,12 @@ class Trainer:
 
                 self.save_checkpoint(step=self._loop.global_step)
 
+            # Training almost never ends on an eval boundary, so without this the
+            # final stretch is never scored and checkpoint_best.pt can be stale -
+            # measured worse on held-out text than the final weights.
+            if val_dataset is not None:
+                self._loop.evaluate_and_track(val_dataset)
+
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
             path = self.save_checkpoint(step=self._loop.global_step)

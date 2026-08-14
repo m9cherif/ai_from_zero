@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-154 tests passing · ~12,500 lines · CPU and GPU
+155 tests passing · ~12,500 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -179,7 +179,7 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        154 tests
+  tests/        155 tests
 scripts/        fetch_corpus.py · build_tokenizer.py · train.py · evaluate.py · chat.py · gui.py · benchmark.py
 ```
 
@@ -196,6 +196,43 @@ python scripts/build_tokenizer.py --type bpe --vocab-size 4096
 
 BPE training uses an incremental pair index, so each merge only rewrites the
 words that actually contained the merged pair.
+
+## A trained model
+
+An 8.3M-parameter model trained end to end on the corpus above, on four CPU
+cores — no GPU:
+
+| | |
+|---|---|
+| Parameters | 8,319,040 (d_model 320, 6 layers, GQA 4/2, vocab 4,096) |
+| Corpus | 24,866,609 tokens, one full epoch |
+| Steps | 6,071 at batch 16 × 256 |
+| Wall clock | 2h 11m at ~3,200 tokens/s |
+| **Held-out perplexity** | **47.80** (uniform baseline 4,096) |
+
+Perplexity is measured with `scripts/evaluate.py` on 408,000 tokens from five
+books that are in neither the training nor validation split — verified at 0/300
+overlapping probes, because a number measured on contaminated text is not a
+number.
+
+```
+'To be, or not'         -> 'to be done; but this is the first / Would not I tell you,
+                            which is a kind of friend, / Excellent and unfortuna'
+'She looked at him and' -> 'she turned to her firm, as though he had a handsome
+                            smile; but she was not quite represented by the reproa'
+'In the beginning'      -> 'of the poop, / As a winter, the great city, the first-rate
+                            of the / Breath-day, the cellar-shops, the two, and'
+```
+
+It completes *"To be, or not to be"*, inflects verbs correctly, keeps quotes and
+clauses balanced, and shifts register between verse and prose depending on the
+prompt. It is a base model at 8M parameters: it continues text, it does not
+answer questions, and it will not stay on topic for long.
+
+Worth knowing: `checkpoint_best.pt` scored **50.65** on that same held-out set
+while the final weights scored **47.80**. The best checkpoint is only as good as
+its last evaluation, and training rarely stops on an eval boundary. A final
+evaluation now runs when training ends, so the two cannot drift apart this way.
 
 ## Training
 

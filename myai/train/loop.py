@@ -213,13 +213,7 @@ class TrainingLoop:
                 and should_step
                 and self._global_step % self._eval_every == 0
             ):
-                val_loss = self.evaluate(val_dataset, self._eval_steps)
-                self._model.train()
-                is_best = val_loss < self._best_loss
-                if is_best:
-                    self._best_loss = val_loss
-                if self._on_eval is not None:
-                    self._on_eval(self._global_step, val_loss, is_best)
+                self.evaluate_and_track(val_dataset)
 
             if self._max_steps and self._global_step >= self._max_steps:
                 break
@@ -246,6 +240,22 @@ class TrainingLoop:
         }
 
     @torch.no_grad()
+    def evaluate_and_track(self, dataset, num_steps: Optional[int] = None) -> float:
+        """Evaluate, update the best loss, and notify ``on_eval``.
+
+        Returns the validation loss. Restores training mode, so this is safe to
+        call from inside the training loop.
+        """
+        val_loss = self.evaluate(dataset, num_steps or self._eval_steps)
+        self._model.train()
+
+        is_best = val_loss < self._best_loss
+        if is_best:
+            self._best_loss = val_loss
+        if self._on_eval is not None:
+            self._on_eval(self._global_step, val_loss, is_best)
+        return val_loss
+
     def evaluate(self, dataset: StreamingDataset, num_steps: int = 100) -> float:
         """Evaluate the model on a dataset. Returns token-weighted mean loss."""
         self._model.eval()

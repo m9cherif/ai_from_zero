@@ -149,6 +149,37 @@ class TestTrainerEndToEnd:
         assert restored is not None
         assert math.isfinite(restored["loop_state"]["best_loss"])
 
+    def test_final_evaluation_runs_off_the_eval_boundary(self, corpus_dir, tmp_path, tokenizer):
+        """Training rarely stops on an eval step; without a final eval the last
+        stretch is never scored and checkpoint_best.pt goes stale."""
+        # eval_every=4 with max_steps=6 means the last scheduled eval is step 4.
+        config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size, eval_every_steps=4, eval_steps=2)
+        dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+        val_dataset = StreamingDataset(
+            data_paths=[str(corpus_dir)], tokenizer=tokenizer, max_seq_len=32,
+            shuffle_buffer_size=4,
+        )
+
+        seen = []
+        trainer = Trainer(config, tokenizer=tokenizer)
+        original = trainer._loop._on_eval
+
+        def record(step, loss, is_best):
+            seen.append(step)
+            original(step, loss, is_best)
+
+        trainer._loop._on_eval = record
+        trainer.train(dataset, val_dataset)
+
+        assert seen, "no evaluation ran at all"
+        assert seen[-1] == trainer._loop.global_step, (
+            f"last eval was at step {seen[-1]} but training ended at "
+            f"{trainer._loop.global_step}"
+        )
+
     def test_no_best_checkpoint_without_validation(self, corpus_dir, tmp_path, tokenizer):
         config = make_config(corpus_dir, tmp_path, tokenizer.vocab_size)
         dataset = StreamingDataset(
