@@ -123,7 +123,15 @@ def main() -> None:
         help="Recompute activations in the backward pass instead of storing them.",
     )
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--device", default="auto",
+        help="auto selects the GPU with the most free memory, else MPS, else CPU",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=None,
+        help="CPU threads. Detected from the cgroup quota and affinity mask "
+             "when omitted, which is what a container may actually use.",
+    )
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--mixed-precision", action="store_true")
     parser.add_argument("--compile", action="store_true", help="Enable torch.compile")
@@ -140,6 +148,10 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    if args.threads:
+        from myai.core.device import configure_threads
+        configure_threads(args.threads)
 
     tokenizer = load_tokenizer(args.tokenizer)
     print(f"Tokenizer: {type(tokenizer).__name__}, vocab={tokenizer.vocab_size}")

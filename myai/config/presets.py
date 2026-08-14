@@ -326,15 +326,14 @@ class TrainConfig(Config):
         super().__init__(**kwargs)
 
     def resolve_device(self):
-        import torch
-        device_str = self.hardware.device
-        if device_str == "auto":
-            if torch.cuda.is_available():
-                self.hardware.device = "cuda"
-            elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-                self.hardware.device = "mps"
-            else:
-                self.hardware.device = "cpu"
+        """Pick the device, preferring the GPU with the most free memory.
+
+        Also sizes PyTorch's thread pool to the CPUs this process may actually
+        use, which on a container is the cgroup quota rather than the host's
+        core count. See myai/core/device.py.
+        """
+        from ..core.device import setup
+        self.hardware.device = str(setup(self.hardware.device))
         return self.hardware.device
 
     def effective_batch_size(self) -> int:

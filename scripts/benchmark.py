@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 
 from myai.config.presets import MODEL_PRESETS
+from myai.core.device import setup as device_setup
 from myai.nn.model import LanguageModel, LMConfig
 from myai.train.optimizer import AdamW, build_param_groups
 
@@ -62,9 +63,13 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--new-tokens", type=int, default=64)
+    parser.add_argument("--device", default="auto",
+                        help="auto picks the GPU with the most free memory")
+    parser.add_argument("--threads", type=int, default=None,
+                        help="Override the detected CPU thread count")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device_setup(args.device, args.threads)
     model = build(args.preset, args.vocab).to(device)
     seq_len = model.config.max_seq_len
 

@@ -17,9 +17,10 @@ class InferenceEngine:
     """
 
     def __init__(self, device: Optional[str] = None, dtype: Optional[torch.dtype] = None):
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._device = torch.device(device)
+        from ..core.device import setup
+        # None/"auto" picks the emptiest GPU and sizes CPU threads to the
+        # container's real allowance; an explicit device is honoured as given.
+        self._device = setup(device or "auto")
         self._dtype = dtype
         self._model: Optional[LanguageModel] = None
         self._tokenizer = None

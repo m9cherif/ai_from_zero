@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-155 tests passing · ~12,500 lines · CPU and GPU
+173 tests passing · ~12,900 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -111,6 +111,39 @@ not a longer wait. [`docs/SCALING.md`](docs/SCALING.md) has the measured
 arithmetic, the extrapolated training time, and why a 1B model is the wrong
 choice for a small token budget regardless of hardware.
 
+## Hardware selection
+
+`--device auto` (the default) resolves the best available compute, and every
+entry point routes through `myai/core/device.py`. Two failure modes it exists to
+avoid, both specific to servers:
+
+**The wrong GPU.** `torch.cuda.is_available()` only says *whether* a GPU exists;
+everything then lands on `cuda:0`, which on a shared box is often the card
+someone else is already filling. Selection is by **free** memory, so a run does
+not OOM on a machine that had 38 GB idle on another card.
+
+**The wrong thread count.** `os.cpu_count()` reports the host's cores, not the
+container's share. A pod limited to 2 CPUs on a 64-core host still sees 64, so
+PyTorch starts 64 threads that contend over 2 cores worth of runtime. The thread
+pool is sized from the **cgroup quota** (v1 and v2) intersected with the CPU
+**affinity mask** — what the process may actually use.
+
+```bash
+python scripts/train.py --device auto       # emptiest GPU, else MPS, else CPU
+python scripts/train.py --device cuda:1     # explicit, never redirected
+python scripts/train.py --threads 8         # override thread detection
+```
+
+```python
+from myai.core.device import setup, describe
+device = setup("auto")        # selects and sizes threads
+print(describe(device))       # cpu, 4 usable CPUs, 4 threads
+```
+
+An explicit device is honoured as given — the emptiest-GPU rule applies only to
+`auto`, so pinning a run to a particular card always works. Requesting CUDA on a
+machine without it warns and falls back to CPU rather than crashing.
+
 ## Performance
 
 Every optimization is measurable — `python scripts/benchmark.py` reports them:
@@ -179,7 +212,7 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        155 tests
+  tests/        173 tests
 scripts/        fetch_corpus.py · build_tokenizer.py · train.py · evaluate.py · chat.py · gui.py · benchmark.py
 ```
 
