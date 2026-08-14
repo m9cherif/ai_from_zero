@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-154 tests passing · ~9,400 lines · CPU and GPU
+154 tests passing · ~12,500 lines · CPU and GPU
 ```
 
 ## Quick start
