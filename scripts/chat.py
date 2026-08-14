@@ -39,6 +39,13 @@ def main() -> None:
     parser.add_argument("--min-p", type=float, default=0.05)
     parser.add_argument("--repetition-penalty", type=float, default=1.15)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--prompt", nargs="+", default=None,
+        help="Answer these prompts and exit instead of starting the REPL. "
+             "Use when stdin is not a terminal - scripts, pipes, CI, or a "
+             "headless server reached over an agent session.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Output only the continuation")
     args = parser.parse_args()
 
     logger.set_level(LogLevel.WARNING)  # keep the chat output clean
@@ -60,6 +67,25 @@ def main() -> None:
     engine.load_checkpoint(checkpoint, args.tokenizer)
 
     model = engine.model
+
+    def answer(prompt: str) -> str:
+        return engine.generate(
+            prompt,
+            max_new_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            min_p=args.min_p,
+            repetition_penalty=args.repetition_penalty,
+        )[len(prompt):].strip()
+
+    if args.prompt:
+        for prompt in args.prompt:
+            if args.quiet:
+                print(answer(prompt))
+            else:
+                print(f"\nYou: {prompt}\nAI:  {answer(prompt)}")
+        return
+
     print("=" * 60)
     print("  TALK TO YOUR AI - BUILT FROM SCRATCH")
     print("=" * 60)
