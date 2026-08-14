@@ -46,7 +46,7 @@ def build_config(args, vocab_size: int) -> TrainConfig:
             "pack_sequences": True,
         },
         optimizer={
-            "optimizer": "adamw",
+            "optimizer": args.optimizer,
             "learning_rate": args.lr,
             "weight_decay": 0.1,
             "beta1": 0.9,
@@ -107,6 +107,21 @@ def main() -> None:
              "CPU step time.",
     )
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument(
+        "--optimizer", choices=["adamw", "adam", "sgd"], default="adamw",
+        help="AdamW keeps two fp32 moments per parameter (16 bytes/param with "
+             "gradients); sgd keeps none (8 bytes), which is what makes very "
+             "large models fit in limited RAM.",
+    )
+    parser.add_argument(
+        "--no-save-optimizer", action="store_true",
+        help="Omit optimizer state from checkpoints. Halves checkpoint size for "
+             "AdamW; the run can no longer be resumed exactly.",
+    )
+    parser.add_argument(
+        "--grad-checkpoint", action="store_true",
+        help="Recompute activations in the backward pass instead of storing them.",
+    )
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
@@ -131,6 +146,8 @@ def main() -> None:
 
     config = build_config(args, tokenizer.vocab_size)
     config.model.use_flash = args.flash
+    config.model.gradient_checkpointing = args.grad_checkpoint
+    config.checkpoint.save_optimizer = not args.no_save_optimizer
     if args.resume:
         config.checkpoint.resume_from = args.resume
 
