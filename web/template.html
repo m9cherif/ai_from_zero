@@ -245,6 +245,67 @@
     roughly a thousandth the size of a modern chat model.
   </p>
 
+  <section class="compare">
+    <h2>The same corpus, at 110× the size</h2>
+    <p class="lede">
+      A 915-million-parameter version of this model was trained on the identical corpus. It is
+      110 times larger and considerably worse, which is the most useful thing either model has
+      to say. Both were given the same three prompts.
+    </p>
+
+    <div class="cards">
+      <article class="card">
+        <header class="card-head">
+          <h3>8,319,040 parameters</h3>
+          <span class="badge live">running above</span>
+        </header>
+        <dl class="rows">
+          <div><dt>Training</dt><dd>6,071 steps — one full epoch</dd></div>
+          <div><dt>Tokens seen</dt><dd>24,866,609</dd></div>
+          <div><dt>Tokens per parameter</dt><dd>2.99</dd></div>
+          <div><dt>Held-out perplexity</dt><dd class="good">47.8</dd></div>
+        </dl>
+        <div class="samples">
+          <p><em>To be, or not</em> to be done; but this is the first / Would not I tell you, which is a kind of friend</p>
+          <p><em>The king</em>'s tongue! / I'll give them a bit of a jail. / To my heart, and the king's sake for ever</p>
+          <p><em>It was a</em> new copy, but the most positively dynamic, / demanded in all these cases of psychological depths</p>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <h3>914,729,472 parameters</h3>
+          <span class="badge">cannot run here</span>
+        </header>
+        <dl class="rows">
+          <div><dt>Training</dt><dd>840 steps</dd></div>
+          <div><dt>Tokens seen</dt><dd>430,080</dd></div>
+          <div><dt>Tokens per parameter</dt><dd>0.0005</dd></div>
+          <div><dt>Held-out perplexity</dt><dd class="bad">1,022.8</dd></div>
+        </dl>
+        <div class="samples">
+          <p><em>To be, or not</em> ァ auth x he to.,  was the his the that and . toe , in. theing a</p>
+          <p><em>The king</em> the his of and the and with to had he with wasss,, of the the of</p>
+          <p><em>It was a</em> and the and her ofs, of hiss was on I not &lt;unk&gt;ed and as he we, of</p>
+        </div>
+      </article>
+    </div>
+
+    <p class="verdict">
+      The larger model learned which words are common and stopped there. Filling a billion
+      parameters takes roughly 18 billion tokens; this corpus has 25 million, so it saw
+      0.002% of what it needed. Its loss sat at 6.93 across eight measurements spanning a
+      sevenfold range of training — a flat line, not slow progress. <strong>Capacity you cannot
+      afford to fill is worse than capacity you do not have</strong>, because every step costs
+      200× more to take.
+    </p>
+    <p class="verdict muted-note">
+      It is absent from this page for a plainer reason too: int8 weights would make the download
+      about 1.2 GB against a 16 MB budget, need roughly 3.7 GB of browser memory, and generate
+      about one token every three seconds.
+    </p>
+  </section>
+
   <footer>
     Weights quantized to int8 and embedded in this page. The greedy output matches the original
     PyTorch model token for token. Built with <code>myai</code> — a language model written from
