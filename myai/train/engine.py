@@ -1,5 +1,6 @@
 """Complete training engine with full orchestration."""
 
+import gc
 import os
 import time
 import math
@@ -283,6 +284,15 @@ class Trainer:
             return
 
         self._model.load_state_dict(state["model_state_dict"])
+        # Drop the loaded copy immediately. load_state_dict copies into the
+        # model's own tensors, so holding the deserialized dict keeps a second
+        # full set of weights alive - 3.7 GB for a 900M model - right when the
+        # optimizer and gradients are about to allocate. Resumed runs were
+        # OOM-killed for exactly this reason where a fresh run of the same
+        # model fitted.
+        del state["model_state_dict"]
+        gc.collect()
+
         if "optimizer_state_dict" in state and self._optimizer is not None:
             self._optimizer.load_state_dict(state["optimizer_state_dict"])
         if "scheduler_state_dict" in state and self._scheduler is not None:

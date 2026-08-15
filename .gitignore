@@ -37,3 +37,8 @@ training.log
 .idea/
 .DS_Store
 Thumbs.db
+
+# Exported browser model (regenerate with scripts/export_web.py)
+web/model.json
+web/*.html
+!web/template.html
