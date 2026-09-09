@@ -125,18 +125,22 @@ and Colab runtimes delete local files when the session ends. Publish it once:
 
 ```bash
 export HF_TOKEN=hf_...
-python scripts/push_model.py --repo yourname/myai-xl \
-    --checkpoint output/ckpt_900m/checkpoint_latest.pt
+python scripts/push_model.py --checkpoint output/ckpt_900m/checkpoint_latest.pt
 ```
+
+That uploads the weights, the tokenizer, a `config.json` and a model card
+generated **from the checkpoint** — so the parameter count and geometry it
+advertises cannot drift from the file beside it. `--dry-run` prints the card and
+the upload plan without publishing.
 
 Then every entry point takes the address instead of a path, downloading and
 caching on first use:
 
 ```bash
-python scripts/chat.py     --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt
-python scripts/evaluate.py --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt --data data/val
-python scripts/serve.py    --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt
-python scripts/train.py    --resume     hf://yourname/myai-xl/checkpoint_latest.pt --steps 40000
+python scripts/chat.py     --checkpoint hf://m9cherif3/ai_from_scratch/checkpoint_latest.pt
+python scripts/evaluate.py --checkpoint hf://m9cherif3/ai_from_scratch/checkpoint_latest.pt --data data/val
+python scripts/serve.py    --checkpoint hf://m9cherif3/ai_from_scratch/checkpoint_latest.pt
+python scripts/train.py    --resume     hf://m9cherif3/ai_from_scratch/checkpoint_latest.pt --steps 40000
 ```
 
 `https://` URLs work too, and `HF_TOKEN` is sent as a header for private repos.

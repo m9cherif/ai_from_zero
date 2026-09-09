@@ -17,6 +17,11 @@ def load_tokenizer(path: str) -> Union[BPETokenizer, CharTokenizer]:
     Files written before the ``type`` field existed are classified by whether
     they carry any merges: no merges means character-level.
     """
+    # A hf:// or https:// address is downloaded and cached, so a published
+    # model's tokenizer travels with its weights.
+    from ..checkpoint.remote import resolve_checkpoint
+    path = resolve_checkpoint(path)
+
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
