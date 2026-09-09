@@ -28,6 +28,14 @@ python scripts/gui.py                  # desktop window (pip install PyQt6)
 The repository ships without a corpus — `scripts/fetch_corpus.py` downloads one.
 Any `.txt` files you drop in `data/` are picked up too.
 
+## Notebook
+
+[`notebooks/train.ipynb`](notebooks/train.ipynb) trains a model end to end on a
+free Colab or Kaggle GPU — clone, corpus, tokenizer, training, evaluation and
+sample generations, in order. Roughly 25 minutes for the 8.3M model.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/m9cherif/ai_from_zero/blob/main-5h8bvh/notebooks/train.ipynb)
+
 ## Data
 
 `scripts/fetch_corpus.py` assembles a multi-domain corpus from sources that stay
