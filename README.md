@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-171 tests passing · ~12,900 lines · CPU and GPU
+186 tests passing · ~12,900 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -72,6 +72,39 @@ that. Windows are exactly `max_seq_len`, so nothing is padded:
 ```bash
 python scripts/train.py --cache-dir output/tokens --data data/train --val-data data/val
 ```
+
+## Your own data, and a model that outlives the machine
+
+Point the corpus builder at any HuggingFace dataset. Files are downloaded,
+`.jsonl`/`.parquet` are unwrapped to plain text, and the result joins the same
+split and leakage check as everything else:
+
+```bash
+python scripts/fetch_corpus.py --hf roneneldan/TinyStories --skip-gutenberg
+python scripts/fetch_corpus.py --hf 'owner/dataset:train.parquet' 'owner/other@v2'
+python scripts/fetch_corpus.py --hf-url https://huggingface.co/datasets/.../resolve/main/x.txt
+```
+
+A trained checkpoint should not live only on the machine that made it — Kaggle
+and Colab runtimes delete local files when the session ends. Publish it once:
+
+```bash
+export HF_TOKEN=hf_...
+python scripts/push_model.py --repo yourname/myai-xl \
+    --checkpoint output/ckpt_900m/checkpoint_latest.pt
+```
+
+Then every entry point takes the address instead of a path, downloading and
+caching on first use:
+
+```bash
+python scripts/chat.py     --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt
+python scripts/evaluate.py --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt --data data/val
+python scripts/serve.py    --checkpoint hf://yourname/myai-xl/checkpoint_latest.pt
+python scripts/train.py    --resume     hf://yourname/myai-xl/checkpoint_latest.pt --steps 40000
+```
+
+`https://` URLs work too, and `HF_TOKEN` is sent as a header for private repos.
 
 ## Architecture
 
@@ -239,7 +272,7 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        171 tests
+  tests/        186 tests
 scripts/        fetch_corpus.py · build_tokenizer.py · train.py · evaluate.py · chat.py · gui.py · benchmark.py
 ```
 

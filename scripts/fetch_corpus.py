@@ -13,6 +13,7 @@ restricted network environments where huggingface.co and gutenberg.org are not.
 
 import argparse
 import concurrent.futures as cf
+import json
 import os
 import re
 import subprocess
@@ -136,6 +137,124 @@ def fetch(dest_dir, name, url):
     return name, True
 
 
+HF_BASE = "https://huggingface.co"
+
+
+def hf_list_text_files(repo: str, revision: str = "main"):
+    """Text-ish files in a dataset repo, via the public tree API."""
+    url = f"{HF_BASE}/api/datasets/{repo}/tree/{revision}?recursive=1"
+    result = subprocess.run(["curl", "-sL", "--max-time", "60", url],
+                            capture_output=True, text=True)
+    try:
+        entries = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(entries, list):
+        return []
+    keep = (".txt", ".jsonl", ".json", ".parquet")
+    return [e["path"] for e in entries
+            if e.get("type") == "file" and e.get("path", "").endswith(keep)]
+
+
+def hf_resolve_url(repo: str, path: str, revision: str = "main") -> str:
+    return f"{HF_BASE}/datasets/{repo}/resolve/{revision}/{path}"
+
+
+def extract_text(path: str) -> str:
+    """Pull plain text out of .txt, .jsonl/.json or .parquet."""
+    if path.endswith(".txt"):
+        return open(path, encoding="utf-8", errors="replace").read()
+
+    if path.endswith((".jsonl", ".json")):
+        chunks = []
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    # Field name varies by dataset; take the first long string.
+                    for key in ("text", "content", "raw_content", "story", "document"):
+                        if isinstance(row.get(key), str):
+                            chunks.append(row[key])
+                            break
+                    else:
+                        longest = max((v for v in row.values() if isinstance(v, str)),
+                                      key=len, default="")
+                        if len(longest) > 40:
+                            chunks.append(longest)
+                elif isinstance(row, str):
+                    chunks.append(row)
+        return "\n\n".join(chunks)
+
+    if path.endswith(".parquet"):
+        try:
+            import pandas as pd
+        except ImportError:
+            print("  parquet needs pandas: pip install pandas pyarrow", file=sys.stderr)
+            return ""
+        frame = pd.read_parquet(path)
+        for key in ("text", "content", "raw_content", "story", "document"):
+            if key in frame.columns:
+                return "\n\n".join(str(v) for v in frame[key].dropna())
+        strings = [c for c in frame.columns if frame[c].dtype == object]
+        if not strings:
+            return ""
+        return "\n\n".join(str(v) for v in frame[strings[0]].dropna())
+
+    return ""
+
+
+def fetch_hf(dest_dir, specs, urls, max_files, workers):
+    """Download HuggingFace dataset files into dest_dir as .txt.
+
+    Each spec is 'owner/dataset' or 'owner/dataset:path/inside/repo'. Without a
+    path, the repo's text files are listed and the first --hf-max-files taken.
+    """
+    jobs = []
+    for spec in specs or []:
+        repo, _, inner = spec.partition(":")
+        revision = "main"
+        if "@" in repo:
+            repo, _, revision = repo.partition("@")
+        paths = [inner] if inner else hf_list_text_files(repo, revision)[:max_files]
+        if not paths:
+            print(f"  no text files found in {repo}", file=sys.stderr)
+        for path in paths:
+            name = f"hf_{repo.replace('/', '_')}_{os.path.basename(path)}"
+            jobs.append((name, hf_resolve_url(repo, path, revision)))
+
+    for url in urls or []:
+        jobs.append((f"hf_{os.path.basename(url.split('?')[0])}", url))
+
+    if not jobs:
+        return 0
+
+    print(f"Fetching {len(jobs)} HuggingFace file(s)...")
+    kept = 0
+    with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+        for name, ok in pool.map(lambda a: fetch(dest_dir, *a), jobs):
+            if not ok:
+                print(f"  unavailable: {name}", file=sys.stderr)
+                continue
+            raw = os.path.join(dest_dir, name)
+            text = extract_text(raw)
+            os.remove(raw)
+            if len(text) < 5000:
+                continue
+            # Land it as .txt so the rest of the pipeline treats it uniformly.
+            with open(os.path.join(dest_dir, os.path.splitext(name)[0] + ".txt"),
+                      "w", encoding="utf-8") as out:
+                out.write(text)
+            kept += 1
+    print(f"  kept {kept} file(s)")
+    return kept
+
+
 def check_contamination(train_dir: str, val_dir: str, samples: int = 40) -> float:
     """Fraction of sampled validation lines that also appear in the training set.
 
@@ -179,6 +298,24 @@ def main() -> None:
     parser.add_argument("--output", default="data", help="Corpus root")
     parser.add_argument("--val-fraction", type=float, default=0.03)
     parser.add_argument("--workers", type=int, default=12)
+    parser.add_argument(
+        "--hf", nargs="+", default=None, metavar="REPO[:FILE]",
+        help="HuggingFace datasets, e.g. roneneldan/TinyStories or "
+             "wikitext:wikitext-103-raw-v1/train.parquet. Pin a revision with "
+             "owner/name@revision.",
+    )
+    parser.add_argument(
+        "--hf-url", nargs="+", default=None, metavar="URL",
+        help="Direct HuggingFace resolve URLs.",
+    )
+    parser.add_argument(
+        "--hf-max-files", type=int, default=4,
+        help="Files to take per dataset when no path is given.",
+    )
+    parser.add_argument(
+        "--skip-gutenberg", action="store_true",
+        help="Use only the HuggingFace sources.",
+    )
     args = parser.parse_args()
 
     staging = os.path.join(args.output, "_raw")
@@ -187,9 +324,13 @@ def main() -> None:
     for path in (staging, train_dir, val_dir):
         os.makedirs(path, exist_ok=True)
 
-    jobs = list(SOURCES)
-    for slug, gid in GUTENBERG:
-        jobs.append((f"gutenberg_{gid}.txt", f"{RAW}/GITenberg/{slug}_{gid}/master/{gid}.txt"))
+    if args.hf or args.hf_url:
+        fetch_hf(staging, args.hf, args.hf_url, args.hf_max_files, args.workers)
+
+    jobs = [] if args.skip_gutenberg else list(SOURCES)
+    if not args.skip_gutenberg:
+        for slug, gid in GUTENBERG:
+            jobs.append((f"gutenberg_{gid}.txt", f"{RAW}/GITenberg/{slug}_{gid}/master/{gid}.txt"))
 
     print(f"Fetching {len(jobs)} files...")
     failed = []
@@ -220,14 +361,39 @@ def main() -> None:
     val_budget = clean_bytes * args.val_fraction
     val_bytes = n_val = 0
 
-    for name, text in documents:
-        # Hold out whole documents so train and val never share text.
-        if val_bytes < val_budget and name.startswith("gutenberg"):
-            open(os.path.join(val_dir, name), "w", encoding="utf-8").write(text)
-            val_bytes += len(text)
-            n_val += 1
-        else:
-            open(os.path.join(train_dir, name), "w", encoding="utf-8").write(text)
+    # Prefer holding out whole documents, so train and val never share text.
+    # Largest first, but only documents that fit the budget - a single document
+    # bigger than the whole budget would otherwise take half the corpus with it.
+    remaining = val_budget
+    held = set()
+    for i in sorted(range(len(documents)), key=lambda i: -len(documents[i][1])):
+        if remaining <= 0:
+            break
+        size = len(documents[i][1])
+        if size <= remaining * 1.5:          # modest overshoot is fine
+            held.add(i)
+            remaining -= size
+
+    if held:
+        for i, (name, text) in enumerate(documents):
+            target = val_dir if i in held else train_dir
+            open(os.path.join(target, name), "w", encoding="utf-8").write(text)
+            if i in held:
+                val_bytes += len(text)
+                n_val += 1
+    else:
+        # Every document is larger than the budget - the usual case for a
+        # HuggingFace dataset shipped as one big file. Split the smallest one
+        # by offset: still disjoint, just not on a document boundary.
+        smallest = min(range(len(documents)), key=lambda i: len(documents[i][1]))
+        for i, (name, text) in enumerate(documents):
+            if i != smallest:
+                open(os.path.join(train_dir, name), "w", encoding="utf-8").write(text)
+                continue
+            cut = len(text) - max(int(len(text) * args.val_fraction), 1)
+            open(os.path.join(train_dir, name), "w", encoding="utf-8").write(text[:cut])
+            open(os.path.join(val_dir, name), "w", encoding="utf-8").write(text[cut:])
+            val_bytes, n_val = len(text) - cut, 1
 
     print(f"\n  downloaded   {raw_bytes/1e6:7.1f} MB ({len(documents)} documents)")
     print(f"  cleaned      {clean_bytes/1e6:7.1f} MB "

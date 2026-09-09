@@ -47,6 +47,12 @@ class InferenceEngine:
 
     def load_checkpoint(self, checkpoint_path: str, tokenizer_path: Optional[str] = None) -> None:
         """Load a model from a checkpoint file."""
+        # A URL or hf:// spec is downloaded and cached; a plain path is used
+        # as-is. This is what lets every entry point share one trained model
+        # rather than a file that exists on a single machine.
+        from ..checkpoint.remote import resolve_checkpoint
+        checkpoint_path = resolve_checkpoint(checkpoint_path)
+
         logger.info(f"Loading checkpoint from {checkpoint_path}")
 
         checkpoint = torch.load(checkpoint_path, map_location=self._device, weights_only=False)

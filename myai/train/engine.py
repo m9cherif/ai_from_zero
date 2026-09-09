@@ -283,6 +283,8 @@ class Trainer:
 
     def _load_checkpoint(self, checkpoint_path: str) -> None:
         """Load checkpoint and resume training."""
+        from ..checkpoint.remote import resolve_checkpoint
+        checkpoint_path = resolve_checkpoint(checkpoint_path)
         state = self._checkpoint_manager.load(checkpoint_path)
         if not state:
             return
