@@ -6,3 +6,7 @@ pyyaml>=6.0
 # Only needed for the desktop chat window (scripts/gui.py):
 #   pip install PyQt6
 # Training, the CLI chat and the tests do not import it.
+
+# Optional: parquet datasets from the HuggingFace Hub
+pandas>=2.0.0
+pyarrow>=14.0.0

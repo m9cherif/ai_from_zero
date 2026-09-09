@@ -75,9 +75,42 @@ python scripts/train.py --cache-dir output/tokens --data data/train --val-data d
 
 ## Your own data, and a model that outlives the machine
 
-Point the corpus builder at any HuggingFace dataset. Files are downloaded,
-`.jsonl`/`.parquet` are unwrapped to plain text, and the result joins the same
-split and leakage check as everything else:
+Search the Hub for datasets worth training on, then choose how much of it you
+want. Sorting the Hub by downloads alone returns image folders, robotics logs
+and scratch caches, so the listing requires positive evidence of text and ranks
+by reach and approval together:
+
+```bash
+python scripts/list_datasets.py                             # top English text
+python scripts/list_datasets.py --limit 20000 --out catalogue.json
+python scripts/list_datasets.py --search shakespeare --language en
+```
+
+```
+   1  HuggingFaceFW/fineweb                422,422   3,302  10B<n<100B    odc-by
+   2  Salesforce/wikitext                1,594,154     768  1M<n<10M      cc-by-sa-3.0
+   3  allenai/c4                         1,286,404     644  10B<n<100B    odc-by
+   4  HuggingFaceFW/fineweb-edu            403,931   1,277  1B<n<10B      odc-by
+   5  mlfoundations/dclm-baseline-1.0      444,781     307  1B<n<10B      cc-by-4.0
+```
+
+Then say how much to train on. File sizes come from the Hub before anything is
+downloaded, so the budget is enforced rather than discovered:
+
+```bash
+python scripts/fetch_corpus.py --hf-from catalogue.json --budget-mb 500
+python scripts/fetch_corpus.py --hf-from catalogue.json --budget-mb 5000 --max-per-dataset 5
+```
+
+| Budget | Roughly | Suits |
+|---|---|---|
+| 100 MB | 27M tokens | the 8.3M model, one epoch |
+| 500 MB | 135M tokens | a 25M model |
+| 2 GB | 540M tokens | a full Kaggle session on the 915M |
+| 20 GB | 5.4B tokens | as far as a 12-hour T4 can reach |
+
+Or name datasets directly. Files are downloaded, `.jsonl`/`.parquet` are
+unwrapped to plain text, and everything joins the same split and leakage check:
 
 ```bash
 python scripts/fetch_corpus.py --hf roneneldan/TinyStories --skip-gutenberg

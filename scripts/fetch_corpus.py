@@ -152,7 +152,7 @@ def hf_list_text_files(repo: str, revision: str = "main"):
     if not isinstance(entries, list):
         return []
     keep = (".txt", ".jsonl", ".json", ".parquet")
-    return [e["path"] for e in entries
+    return [(e["path"], int(e.get("size") or 0)) for e in entries
             if e.get("type") == "file" and e.get("path", "").endswith(keep)]
 
 
@@ -221,11 +221,18 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers):
         revision = "main"
         if "@" in repo:
             repo, _, revision = repo.partition("@")
-        paths = [inner] if inner else hf_list_text_files(repo, revision)[:max_files]
+        if inner:
+            paths = [inner]
+        else:
+            paths = [p for p, _ in hf_list_text_files(repo, revision)[:max_files]]
         if not paths:
             print(f"  no text files found in {repo}", file=sys.stderr)
         for path in paths:
-            name = f"hf_{repo.replace('/', '_')}_{os.path.basename(path)}"
+            # Full inner path in the name: gsm8k ships main/test and
+            # socratic/test, and a basename-only name makes two jobs collide
+            # on one file - which crashed the second one mid-download.
+            flat = path.replace("/", "-")
+            name = f"hf_{repo.replace('/', '_')}_{flat}"
             jobs.append((name, hf_resolve_url(repo, path, revision)))
 
     for url in urls or []:
@@ -242,8 +249,13 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers):
                 print(f"  unavailable: {name}", file=sys.stderr)
                 continue
             raw = os.path.join(dest_dir, name)
+            if not os.path.exists(raw):
+                continue
             text = extract_text(raw)
-            os.remove(raw)
+            try:
+                os.remove(raw)
+            except FileNotFoundError:
+                pass
             if len(text) < 5000:
                 continue
             # Land it as .txt so the rest of the pipeline treats it uniformly.
@@ -253,6 +265,40 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers):
             kept += 1
     print(f"  kept {kept} file(s)")
     return kept
+
+
+def select_within_budget(catalogue, budget_bytes, max_per_dataset,
+                         min_bytes=1_000_000, revision="main"):
+    """Walk a ranked catalogue and pick files until the byte budget is met.
+
+    Sizes come from the Hub's tree listing, so the budget is enforced before
+    anything is downloaded rather than discovered afterwards.
+    """
+    chosen, total = [], 0
+    for entry in catalogue:
+        if total >= budget_bytes:
+            break
+        repo = entry["id"] if isinstance(entry, dict) else str(entry)
+        try:
+            files = hf_list_text_files(repo, revision)
+        except Exception:
+            continue
+        if not files:
+            continue
+        # Largest first, taking the first that still fits. Smallest-first
+        # spends the budget on kilobyte fragments - judge prompts, tiny
+        # benchmark shards - and never reaches the prose.
+        files.sort(key=lambda pair: -pair[1])
+        taken = 0
+        for path, size in files:
+            if taken >= max_per_dataset or total >= budget_bytes:
+                break
+            if size < min_bytes or total + size > budget_bytes:
+                continue
+            chosen.append((repo, path, size))
+            total += size
+            taken += 1
+    return chosen, total
 
 
 def check_contamination(train_dir: str, val_dir: str, samples: int = 40) -> float:
@@ -313,6 +359,26 @@ def main() -> None:
         help="Files to take per dataset when no path is given.",
     )
     parser.add_argument(
+        "--hf-from", default=None, metavar="CATALOGUE.json",
+        help="A catalogue from scripts/list_datasets.py. Combined with "
+             "--budget-mb, files are taken in rank order until the budget "
+             "is met.",
+    )
+    parser.add_argument(
+        "--budget-mb", type=float, default=500.0,
+        help="How much text to download from --hf-from, in megabytes. "
+             "Roughly 3.7 chars per token, so 500 MB is about 135M tokens.",
+    )
+    parser.add_argument(
+        "--min-file-mb", type=float, default=1.0,
+        help="Ignore files smaller than this - benchmark shards and prompt "
+             "fragments are text but not prose.",
+    )
+    parser.add_argument(
+        "--max-per-dataset", type=int, default=3,
+        help="Files taken from any one dataset, so a budget spans sources.",
+    )
+    parser.add_argument(
         "--skip-gutenberg", action="store_true",
         help="Use only the HuggingFace sources.",
     )
@@ -324,8 +390,21 @@ def main() -> None:
     for path in (staging, train_dir, val_dir):
         os.makedirs(path, exist_ok=True)
 
-    if args.hf or args.hf_url:
-        fetch_hf(staging, args.hf, args.hf_url, args.hf_max_files, args.workers)
+    hf_specs = list(args.hf or [])
+    if args.hf_from:
+        catalogue = json.load(open(args.hf_from, encoding="utf-8"))
+        budget = int(args.budget_mb * 1e6)
+        picked, total = select_within_budget(
+            catalogue, budget, args.max_per_dataset,
+            min_bytes=int(args.min_file_mb * 1e6))
+        print(f"Budget {args.budget_mb:.0f} MB -> {len(picked)} files, "
+              f"{total/1e6:.1f} MB, ~{total/3.7/1e6:.0f}M tokens")
+        for repo, path, size in picked:
+            print(f"    {size/1e6:8.1f} MB  {repo}/{path}")
+        hf_specs += [f"{repo}:{path}" for repo, path, _ in picked]
+
+    if hf_specs or args.hf_url:
+        fetch_hf(staging, hf_specs, args.hf_url, args.hf_max_files, args.workers)
 
     jobs = [] if args.skip_gutenberg else list(SOURCES)
     if not args.skip_gutenberg:
