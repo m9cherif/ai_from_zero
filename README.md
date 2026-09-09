@@ -35,9 +35,11 @@ free Colab or Kaggle GPU — clone, corpus, tokenizer, training, evaluation and
 sample generations, in order. Roughly 25 minutes for the 8.3M model.
 
 [`notebooks/kaggle_train_xl.ipynb`](notebooks/kaggle_train_xl.ipynb) trains the
-915M `xl` preset on Kaggle's T4 x2 (15 GB per card, 12-hour sessions). SGD keeps
-it inside 7.3 GB where AdamW would need 14.6 GB; it measures throughput before
-choosing a step budget, and chains across sessions with `--resume`.
+915M `xl` preset on Kaggle's T4 x2 (15 GB per card, 12-hour sessions). SGD at
+`--momentum 0` keeps it inside 7.3 GB where AdamW would need 14.6 GB; it picks
+training data from the Hub to a size budget, measures throughput before choosing
+a step budget, and publishes the checkpoint to the Hub at the end so the next
+session resumes from `hf://` rather than from a runtime that no longer exists.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/m9cherif/ai_from_zero/blob/main-5h8bvh/notebooks/train.ipynb)
 
