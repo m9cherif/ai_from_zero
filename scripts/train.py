@@ -1,7 +1,7 @@
 """Train a language model on the corpus in data/.
 
-    python scripts/train.py --preset tiny --steps 2000
-    python scripts/train.py --preset small --steps 20000 --batch-size 16
+    python scripts/train.py --d-model 320 --n-layers 6 --steps 6500
+    python scripts/train.py --preset xl --steps 20000 --batch-size 16
 
 Uses the full library stack: config -> Trainer -> StreamingDataset, with
 checkpointing, evaluation and resume.
@@ -83,7 +83,7 @@ def build_config(args, vocab_size: int) -> TrainConfig:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="tiny")
+    parser.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="xl")
     parser.add_argument("--data", nargs="+", default=["data"])
     parser.add_argument(
         "--val-data", nargs="+", default=None,

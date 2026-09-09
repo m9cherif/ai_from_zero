@@ -54,7 +54,7 @@ def main() -> None:
     if not checkpoint or not os.path.exists(checkpoint):
         print(
             f"No checkpoint found in {args.checkpoint_dir}.\n"
-            f"Train one first:  python scripts/train.py --preset tiny --steps 2000",
+            f"Train one first:  python scripts/train.py --d-model 320 --n-layers 6 --steps 6500",
             file=sys.stderr,
         )
         sys.exit(1)

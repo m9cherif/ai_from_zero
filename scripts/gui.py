@@ -291,7 +291,7 @@ class ChatWindow(QMainWindow):
             self._fail(
                 "No checkpoint found.\n\nTrain one first:\n"
                 "  python scripts/build_tokenizer.py --type bpe --vocab-size 2048\n"
-                "  python scripts/train.py --preset tiny --steps 3000"
+                "  python scripts/train.py --d-model 320 --n-layers 6 --steps 6500"
             )
             return
 

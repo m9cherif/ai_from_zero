@@ -344,16 +344,21 @@ class TrainConfig(Config):
 # Ready-made model scales. Each keeps head_dim at 64, which is what attention
 # kernels are tuned for, and d_ff at ~4x d_model.
 MODEL_PRESETS = {
-    "tiny": dict(d_model=128, n_heads=4, n_kv_heads=2, n_layers=4, d_ff=512, max_seq_len=256),
-    "mini": dict(d_model=256, n_heads=4, n_kv_heads=2, n_layers=6, d_ff=1024, max_seq_len=512),
-    "small": dict(d_model=512, n_heads=8, n_kv_heads=4, n_layers=8, d_ff=2048, max_seq_len=1024),
-    "base": dict(d_model=768, n_heads=12, n_kv_heads=4, n_layers=12, d_ff=3072, max_seq_len=1024),
-    # ~1B parameters at vocab 8192. The architecture scales to this cleanly, but
-    # the hardware requirement is a step change, not a longer wait:
-    #   weights 3.9 GB + grads 3.9 GB + Adam m/v 7.9 GB = 15.7 GB of fp32 state
-    #   before a single activation, so it needs a 40 GB+ accelerator.
-    # See docs/SCALING.md for the measured basis of those numbers.
-    "xl": dict(d_model=1536, n_heads=12, n_kv_heads=4, n_layers=28, d_ff=6144, max_seq_len=1024),
+    # 914,729,472 parameters at vocab 4096 - the geometry of the trained
+    # checkpoint, so a run resumes into it without overrides.
+    #
+    # SwiGLU scales d_ff by 2/3 internally, so the feed-forward matrices are
+    # 4096 wide rather than 6144; the count above already accounts for that.
+    #
+    # Memory is the constraint, and it is a step change rather than a longer
+    # wait. Training needs, before a single activation:
+    #     AdamW  weights 3.7 + grads 3.7 + m 3.7 + v 3.7 = 14.6 GB
+    #     SGD    weights 3.7 + grads 3.7               =  7.3 GB
+    # Even the SGD path peaked at 15.3 GB of a 15 GB box and was eventually
+    # OOM-killed. Inference is a different matter: weights only, ~3.7 GB, which
+    # is why scripts/serve.py can serve a model this box cannot train.
+    # See docs/SCALING.md for the measured basis of all of it.
+    "xl": dict(d_model=1536, n_heads=4, n_kv_heads=2, n_layers=35, d_ff=6144, max_seq_len=256),
 }
 
 

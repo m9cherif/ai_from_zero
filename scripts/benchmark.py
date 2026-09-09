@@ -1,7 +1,7 @@
 """Measure the effect of each optimization.
 
     python scripts/benchmark.py
-    python scripts/benchmark.py --preset small --steps 20
+    python scripts/benchmark.py --steps 4 --batch-size 1
 
 Reports training step time, generation throughput with and without the KV
 cache, and the memory/speed trade-off of gradient checkpointing.
@@ -58,7 +58,7 @@ def bench_training(model, batch, vocab, steps):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="tiny")
+    parser.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="xl")
     parser.add_argument("--vocab", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--steps", type=int, default=8)

@@ -38,12 +38,12 @@ during optimizer construction, not partway through training.
 
 Speed is the second wall. Measured throughput on 4 Xeon cores at batch 8 × 256:
 
-| Model | Params | Tokens/s | Steps/s |
-|---|---|---|---|
-| `tiny` | 1.05M | 14,992 | 7.3 |
-| `mini` | 4.95M | 6,245 | 3.1 |
-| `small` | 24.7M | 1,835 | 0.90 |
-| `base` | 77.1M | 675 | 0.33 |
+| Params | Tokens/s | Steps/s |
+|---|---|---|
+| 1.05M | 14,992 | 7.3 |
+| 4.95M | 6,245 | 3.1 |
+| 24.7M | 1,835 | 0.90 |
+| 77.1M | 675 | 0.33 |
 
 Extrapolating the measured 77M number linearly — which is optimistic, since
 larger models lose cache locality — gives **~53 tokens/s** for the 1B model.

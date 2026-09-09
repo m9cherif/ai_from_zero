@@ -7,7 +7,7 @@ autograd and BLAS — nothing else. There is no `torch.nn.Linear`, no
 `torch.nn.MultiheadAttention`, no `torch.optim`, no HuggingFace.
 
 ```
-173 tests passing · ~12,900 lines · CPU and GPU
+171 tests passing · ~12,900 lines · CPU and GPU
 ```
 
 ## Quick start
@@ -19,7 +19,8 @@ pip install -r requirements.txt
 ```bash
 python scripts/fetch_corpus.py                                    # ~90 MB of real text
 python scripts/build_tokenizer.py --type bpe --vocab-size 4096 --data 'data/train/*.txt'
-python scripts/train.py --preset mini --steps 5000 --data data/train --val-data data/val
+python scripts/train.py --d-model 320 --n-layers 6 --seq-len 256 \
+    --steps 6500 --batch-size 16 --lr 6e-4 --data data/train --val-data data/val
 python scripts/chat.py                 # terminal
 python scripts/gui.py                  # desktop window (pip install PyQt6)
 ```
@@ -96,20 +97,32 @@ text = model.generate(prompt_ids, max_new_tokens=100,
 
 ### Model presets
 
-| Preset | d_model | Layers | Heads (KV) | Context |
-|---|---|---|---|---|
-| `tiny` | 128 | 4 | 4 (2) | 256 |
-| `mini` | 256 | 6 | 4 (2) | 512 |
-| `small` | 512 | 8 | 8 (4) | 1024 |
-| `base` | 768 | 12 | 12 (4) | 1024 |
-| `xl` | 1536 | 28 | 12 (4) | 1024 |
+| Preset | d_model | Layers | Heads (KV) | Context | Parameters |
+|---|---|---|---|---|---|
+| `xl` | 1536 | 35 | 4 (2) | 256 | 914,729,472 |
 
-`xl` is ~982M parameters. The architecture scales to it unchanged, but fp32
-weights, gradients and the two AdamW moments come to **15.7 GB before a single
-activation**, so it needs a 40 GB+ accelerator — this is a hardware step change,
-not a longer wait. [`docs/SCALING.md`](docs/SCALING.md) has the measured
-arithmetic, the extrapolated training time, and why a 1B model is the wrong
-choice for a small token budget regardless of hardware.
+`xl` is the geometry of the trained checkpoint, so a run resumes into it
+without overrides. Training it needs, before a single activation:
+
+```
+AdamW   weights 3.7 + grads 3.7 + m 3.7 + v 3.7 = 14.6 GB
+SGD     weights 3.7 + grads 3.7               =  7.3 GB
+```
+
+Even the SGD path peaked at 15.3 GB of a 15 GB machine and was eventually
+OOM-killed, so this wants a 40 GB+ accelerator. **Inference is a different
+matter** — weights only, ~3.7 GB — which is why `scripts/serve.py` can serve a
+model this hardware cannot train.
+
+For anything smaller, override the geometry rather than reaching for a preset:
+
+```bash
+python scripts/train.py --d-model 320 --n-layers 6 --seq-len 256   # 8.3M
+```
+
+[`docs/SCALING.md`](docs/SCALING.md) has the measured arithmetic and why a
+billion parameters is the wrong choice for a 25M-token corpus regardless of
+hardware.
 
 ## Hardware selection
 
@@ -187,15 +200,16 @@ Generation (64 tok)  117 ms with KV cache vs 197 ms without (1.69x;
 
 Training throughput by preset, same machine, batch 8 × 256, vocab 2048:
 
-| Preset | Params | Steps/s | Tokens/s |
-|---|---|---|---|
-| `tiny` | 1.05M | 7.3 | 14,992 |
-| `mini` | 4.95M | 3.1 | 6,245 |
-| `small` | 24.7M | 0.90 | 1,835 |
-| `base` | 77.1M | 0.33 | 675 |
+| Params | Steps/s | Tokens/s |
+|---|---|---|
+| 1.05M | 7.3 | 14,992 |
+| 4.95M | 3.1 | 6,245 |
+| 24.7M | 0.90 | 1,835 |
+| 77.1M | 0.33 | 675 |
+| 914.7M | 0.07 | 39 |
 
 Steps/s is not a property of the hardware alone — a step is whatever
-`batch × seq_len` you choose. On the `tiny` preset, batch 1 gives 30 steps/s and
+`batch × seq_len` you choose. On the 1.05M model, batch 1 gives 30 steps/s and
 batch 32 gives 2.5, while tokens/s *rises* from 7,716 to 20,277 across that same
 range because larger batches amortize per-step overhead. Compare configurations
 by tokens/s; use steps/s only to estimate wall clock for a fixed step budget.
@@ -212,7 +226,7 @@ myai/
   checkpoint/   versioned save/load with rotation
   evaluate/     perplexity, accuracy, benchmarks
   config/       schema-validated configuration with presets
-  tests/        173 tests
+  tests/        171 tests
 scripts/        fetch_corpus.py · build_tokenizer.py · train.py · evaluate.py · chat.py · gui.py · benchmark.py
 ```
 
@@ -270,7 +284,7 @@ evaluation now runs when training ends, so the two cannot drift apart this way.
 ## Training
 
 ```bash
-python scripts/train.py --preset small --steps 20000 --batch-size 16 \
+python scripts/train.py --preset xl --steps 20000 --batch-size 16 \
     --grad-accum 4 --mixed-precision --flash
 ```
 
@@ -284,7 +298,7 @@ python scripts/train.py --resume output/checkpoints/checkpoint_latest.pt
 Pass held-out files to evaluate during training and track the best model:
 
 ```bash
-python scripts/train.py --preset small --steps 20000 --data data/train --val-data data/val
+python scripts/train.py --preset xl --steps 20000 --data data/train --val-data data/val
 ```
 
 Rotation keeps the last N step files. `checkpoint_latest.pt` always mirrors the

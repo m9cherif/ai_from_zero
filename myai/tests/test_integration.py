@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from ..config.presets import TrainConfig, preset_config
+from ..config.presets import MODEL_PRESETS, TrainConfig, preset_config
 from ..train.engine import Trainer, build_model_config
 from ..train.loop import TrainingLoop, iter_batches
 from ..train.optimizer import AdamW
@@ -362,12 +362,24 @@ class TestTokenizerRoundTrip:
 
 
 class TestConfigPresets:
-    @pytest.mark.parametrize("name", ["tiny", "mini", "small", "base"])
+    @pytest.mark.parametrize("name", sorted(MODEL_PRESETS))
     def test_presets_build_valid_models(self, name):
         config = preset_config(name, max_steps=1)
         model_config = build_model_config(config)
         assert model_config.d_model % model_config.n_heads == 0
         assert model_config.n_heads % (model_config.n_kv_heads or model_config.n_heads) == 0
+
+    def test_xl_geometry_matches_the_trained_checkpoint(self):
+        """The preset must stay loadable by the checkpoint it describes.
+
+        Asserted on the geometry rather than by building the model: at 914M
+        parameters that would allocate 3.7 GB inside the test suite.
+        """
+        model = MODEL_PRESETS["xl"]
+        assert model == dict(
+            d_model=1536, n_heads=4, n_kv_heads=2,
+            n_layers=35, d_ff=6144, max_seq_len=256,
+        )
 
     def test_unknown_preset_rejected(self):
         with pytest.raises(ValueError):
