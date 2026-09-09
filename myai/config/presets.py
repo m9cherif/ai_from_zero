@@ -128,6 +128,10 @@ class OptimizerConfig(Config):
             "default": 0.1,
             "validate": lambda v, n: None,
         },
+        "momentum": {
+            "default": 0.9,
+            "validate": lambda v, n: 0.0 <= v < 1.0,
+        },
         "beta1": {
             "default": 0.9,
             "validate": lambda v, n: V.check_range(v, 0.0, 1.0, n),

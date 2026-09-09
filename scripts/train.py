@@ -51,6 +51,7 @@ def build_config(args, vocab_size: int) -> TrainConfig:
             "weight_decay": 0.1,
             "beta1": 0.9,
             "beta2": 0.95,
+            "momentum": args.momentum,
             "max_grad_norm": 1.0,
             "gradient_accumulation_steps": args.grad_accum,
         },
@@ -112,6 +113,11 @@ def main() -> None:
         help="AdamW keeps two fp32 moments per parameter (16 bytes/param with "
              "gradients); sgd keeps none (8 bytes), which is what makes very "
              "large models fit in limited RAM.",
+    )
+    parser.add_argument(
+        "--momentum", type=float, default=0.9,
+        help="SGD momentum. Each non-zero value costs one extra copy of the "
+             "parameters (3.7 GB for a 900M model); --momentum 0 allocates none.",
     )
     parser.add_argument(
         "--no-save-optimizer", action="store_true",

@@ -71,10 +71,14 @@ def _build_optimizer(model: LanguageModel, config: TrainConfig) -> Optimizer:
             weight_decay=opt_config.weight_decay,
         )
     if opt_type == "sgd":
+        # Momentum costs a full extra copy of the parameters - 3.7 GB for a
+        # 900M model - because the buffer is allocated per parameter. At
+        # momentum=0 SGD allocates nothing, which is what lets a large model
+        # fit on a small card.
         return SGD(
             groups,
             lr=opt_config.learning_rate,
-            momentum=0.9,
+            momentum=opt_config.momentum,
             weight_decay=opt_config.weight_decay,
         )
     raise ValueError(f"Unsupported optimizer: {opt_type}")
