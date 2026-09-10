@@ -38,8 +38,15 @@ class BPETokenizer(BaseTokenizer):
             self.set_merges(merges)
 
         # Words repeat constantly in natural text, and applying merges is the
-        # expensive part of encoding, so cache the result per pretoken.
+        # expensive part of encoding, so cache the result per pretoken. The
+        # cache is bounded: an unbounded dict, reused across every file a
+        # TokenCache builds from, grows with every unique pretoken it has ever
+        # seen. A large, script-diverse corpus (many languages, many alphabets)
+        # can hold millions of them - that filled 30 GB of Kaggle RAM on one
+        # such run - so the cache is dropped and restarted once it gets big,
+        # trading a burst of recompute for a hard memory ceiling.
         self._encode_cache: Dict[str, List[str]] = {}
+        self._encode_cache_limit = 2_000_000
         self._has_initialized_special = False
 
     def _ensure_special_tokens(self) -> None:
@@ -73,6 +80,9 @@ class BPETokenizer(BaseTokenizer):
         cached = self._encode_cache.get(pretoken)
         if cached is not None:
             return cached
+
+        if len(self._encode_cache) >= self._encode_cache_limit:
+            self._encode_cache.clear()
 
         symbols = list(pretoken)
 

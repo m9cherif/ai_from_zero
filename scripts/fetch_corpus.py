@@ -140,8 +140,42 @@ def fetch(dest_dir, name, url):
 HF_BASE = "https://huggingface.co"
 
 
-def hf_list_text_files(repo: str, revision: str = "main"):
-    """Text-ish files in a dataset repo, via the public tree API."""
+_LOCALE_PATTERNS = (
+    # Dated Wikipedia dumps: wikimedia/wikipedia ships every language as its
+    # own config, e.g. "20231101.de/", "20231101.oc/" - captures the code.
+    re.compile(r"\b\d{8}\.([a-z]{2,3})(?:-[a-z]+)?[/_]"),
+    # "data/<lang>/..." directories, the layout megawika, oscar and similar
+    # multilingual corpora use.
+    re.compile(r"(?:^|/)data/([a-z]{2,3})/"),
+)
+
+
+def is_non_english_locale(path: str, keep: str = "en") -> bool:
+    """True if the path names a language config other than ``keep``.
+
+    Catches the two shapes that turned one --budget-mb run into a heap of
+    German, Arabic, Occitan and Lingala Wikipedia: those datasets pack every
+    language into the same repo as separate file paths, so a dataset-level
+    language tag cannot see which files are actually English. Files that
+    don't match either pattern (the ordinary case - a shard numbered
+    "004_00016.parquet") are left alone.
+    """
+    if not keep:
+        return False
+    lower = path.lower()
+    for pattern in _LOCALE_PATTERNS:
+        match = pattern.search(lower)
+        if match and match.group(1) != keep:
+            return True
+    return False
+
+
+def hf_list_text_files(repo: str, revision: str = "main", language: str = "en"):
+    """Text-ish files in a dataset repo, via the public tree API.
+
+    ``language`` filters out files whose path names a different language
+    config (see is_non_english_locale); pass "" to keep everything.
+    """
     url = f"{HF_BASE}/api/datasets/{repo}/tree/{revision}?recursive=1"
     result = subprocess.run(["curl", "-sL", "--max-time", "60", url],
                             capture_output=True, text=True)
@@ -152,8 +186,11 @@ def hf_list_text_files(repo: str, revision: str = "main"):
     if not isinstance(entries, list):
         return []
     keep = (".txt", ".jsonl", ".json", ".parquet")
-    return [(e["path"], int(e.get("size") or 0)) for e in entries
-            if e.get("type") == "file" and e.get("path", "").endswith(keep)]
+    files = [(e["path"], int(e.get("size") or 0)) for e in entries
+             if e.get("type") == "file" and e.get("path", "").endswith(keep)]
+    if language:
+        files = [(p, s) for p, s in files if not is_non_english_locale(p, language)]
+    return files
 
 
 def hf_resolve_url(repo: str, path: str, revision: str = "main") -> str:

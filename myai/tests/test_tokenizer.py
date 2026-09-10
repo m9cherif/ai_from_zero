@@ -80,6 +80,42 @@ class TestBPETokenizer:
         assert ids[0] == vocab.bos_id
         assert ids[-1] == vocab.eos_id
 
+    def test_encode_cache_is_bounded(self):
+        """The per-pretoken memo cache must not grow without limit.
+
+        A tokenizer instance reused across a large, script-diverse corpus - one
+        real run spanned German, Arabic, Occitan and Lingala text - can be
+        asked to memoize millions of distinct pretokens. Left unbounded that
+        cache exhausted 30 GB of RAM on its own; it must self-evict instead.
+        """
+        vocab = Vocabulary()
+        vocab.build_initial()
+        vocab.add_tokens(list("abcdefghijklmnopqrstuvwxyz "))
+        tokenizer = BPETokenizer(vocab=vocab, merges=[])
+        tokenizer._encode_cache_limit = 10
+
+        for i in range(100):
+            tokenizer.encode(f"word{i}", add_special_tokens=False)
+
+        assert len(tokenizer._encode_cache) <= 10
+
+    def test_encode_cache_eviction_does_not_change_output(self):
+        """Eviction is a memory bound, not a correctness change: a pretoken
+        encoded before and after a clear must produce the same symbols."""
+        vocab = Vocabulary()
+        vocab.build_initial()
+        vocab.add_tokens(list("abcdefghijklmnopqrstuvwxyz "))
+        tokenizer = BPETokenizer(vocab=vocab, merges=[("t", "h")])
+        tokenizer._encode_cache_limit = 3
+
+        text = "the quick brown fox"
+        before = tokenizer.encode(text, add_special_tokens=False)
+        for i in range(50):
+            tokenizer.encode(f"filler{i}", add_special_tokens=False)
+        after = tokenizer.encode(text, add_special_tokens=False)
+
+        assert before == after
+
 
 class TestTokenizerTrainer:
     def test_train_small(self):
