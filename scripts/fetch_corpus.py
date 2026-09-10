@@ -123,14 +123,18 @@ def strip_boilerplate(text: str) -> str:
     return text.strip() + "\n"
 
 
-def fetch(dest_dir, name, url):
+def fetch(dest_dir, name, url, timeout=300):
     dest = os.path.join(dest_dir, name)
     result = subprocess.run(
-        ["curl", "-sL", "--max-time", "120", "-o", dest, "-w", "%{http_code}", url],
+        ["curl", "-sL", "--max-time", str(timeout), "-o", dest, "-w", "%{http_code}", url],
         capture_output=True, text=True,
     )
     size = os.path.getsize(dest) if os.path.exists(dest) else 0
-    if result.stdout.strip() != "200" or size < 5000:
+    # curl's exit code matters as much as the status line: a --max-time abort
+    # can happen after headers arrive, so a truncated multi-hundred-MB parquet
+    # shard still prints "200" - only the nonzero return code (28, on timeout)
+    # gives it away.
+    if result.returncode != 0 or result.stdout.strip() != "200" or size < 5000:
         if os.path.exists(dest):
             os.remove(dest)
         return name, False
@@ -335,7 +339,15 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers, text_cap=0):
                 continue
             # Land it as .txt so the rest of the pipeline treats it uniformly.
             out_path = os.path.join(dest_dir, os.path.splitext(name)[0] + ".txt")
-            written = extract_text_to(raw, out_path, limit_bytes=text_cap)
+            try:
+                written = extract_text_to(raw, out_path, limit_bytes=text_cap)
+            except Exception as exc:
+                # One corrupt or truncated download must not cost every other
+                # file already sitting in dest_dir: an unhandled parquet/json
+                # parse error here used to propagate out of fetch_hf and kill
+                # the whole run *after* the good files had already downloaded.
+                print(f"  skipped (unreadable): {name} - {exc}", file=sys.stderr)
+                written = 0
             try:
                 os.remove(raw)
             except FileNotFoundError:
@@ -345,7 +357,7 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers, text_cap=0):
                     os.remove(out_path)
                 continue
             kept += 1
-    print(f"  kept {kept} file(s)")
+    print(f"  kept {kept} of {len(jobs)} file(s)")
     return kept
 
 

@@ -60,3 +60,96 @@ class TestIsNonEnglishLocale:
 
     def test_empty_keep_disables_filtering(self):
         assert fetch_corpus.is_non_english_locale("20231101.de/x.parquet", keep="") is False
+
+
+class TestFetchReturnCode:
+    """--max-time can abort a curl transfer after the response headers have
+    already arrived: the status line it prints can still read "200" while
+    curl's own exit code (28, on timeout) says the body never finished. A
+    truncated multi-hundred-megabyte parquet shard slipped past a check that
+    only looked at the status code, and that is what corrupted one run's
+    corpus.
+    """
+
+    def test_nonzero_exit_is_a_failure_even_with_status_200(self, tmp_path, monkeypatch):
+        name = "partial.parquet"
+        (tmp_path / name).write_bytes(b"x" * 10_000)  # what curl wrote before aborting
+
+        class FakeResult:
+            returncode = 28
+            stdout = "200"
+
+        monkeypatch.setattr(fetch_corpus.subprocess, "run", lambda *a, **k: FakeResult())
+
+        _, ok = fetch_corpus.fetch(str(tmp_path), name, "https://example.com/x.parquet")
+
+        assert ok is False
+        assert not (tmp_path / name).exists()  # the truncated file must not linger
+
+    def test_clean_exit_and_status_200_is_kept(self, tmp_path, monkeypatch):
+        name = "ok.parquet"
+        (tmp_path / name).write_bytes(b"x" * 10_000)
+
+        class FakeResult:
+            returncode = 0
+            stdout = "200"
+
+        monkeypatch.setattr(fetch_corpus.subprocess, "run", lambda *a, **k: FakeResult())
+
+        _, ok = fetch_corpus.fetch(str(tmp_path), name, "https://example.com/x.parquet")
+
+        assert ok is True
+        assert (tmp_path / name).exists()
+
+
+class TestFetchHfResilience:
+    def test_one_corrupt_file_does_not_abort_the_batch(self, tmp_path, monkeypatch):
+        """The actual failure mode from the incident: an unhandled
+        pyarrow.ArrowInvalid on one truncated shard propagated straight out
+        of fetch_hf and killed the whole run - after twelve other files had
+        already downloaded successfully and were sitting right there,
+        discarded along with it.
+        """
+        def fake_fetch(dest_dir, name, url):
+            open(os.path.join(dest_dir, name), "w").write("placeholder")
+            return name, True
+
+        def fake_extract(src, dst, limit_bytes=0):
+            if "bad" in src:
+                raise ValueError("Parquet magic bytes not found in footer")
+            with open(dst, "w") as f:
+                f.write("x" * 6000)
+            return 6000
+
+        monkeypatch.setattr(fetch_corpus, "fetch", fake_fetch)
+        monkeypatch.setattr(fetch_corpus, "extract_text_to", fake_extract)
+
+        kept = fetch_corpus.fetch_hf(
+            str(tmp_path),
+            specs=["owner/bad-repo:shard.parquet", "owner/good-repo:shard.parquet"],
+            urls=None, max_files=4, workers=2,
+        )
+
+        assert kept == 1
+        txt_files = [f for f in os.listdir(tmp_path) if f.endswith(".txt")]
+        assert len(txt_files) == 1
+        assert "good" in txt_files[0]
+        assert not any("bad" in f for f in os.listdir(tmp_path))  # no leftover raw or partial file
+
+    def test_all_files_bad_returns_zero_without_raising(self, tmp_path, monkeypatch):
+        def fake_fetch(dest_dir, name, url):
+            open(os.path.join(dest_dir, name), "w").write("placeholder")
+            return name, True
+
+        def fake_extract(src, dst, limit_bytes=0):
+            raise ValueError("Parquet magic bytes not found in footer")
+
+        monkeypatch.setattr(fetch_corpus, "fetch", fake_fetch)
+        monkeypatch.setattr(fetch_corpus, "extract_text_to", fake_extract)
+
+        kept = fetch_corpus.fetch_hf(
+            str(tmp_path), specs=["owner/repo:shard.parquet"],
+            urls=None, max_files=4, workers=2,
+        )
+
+        assert kept == 0
