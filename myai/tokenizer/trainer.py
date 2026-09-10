@@ -97,12 +97,41 @@ class TokenizerTrainer:
         word_counts = self._get_words_with_frequencies(texts)
         logger.info(f"Collected {len(word_counts)} unique pretokens")
 
-        # Every character that appears anywhere must be in the vocabulary,
-        # otherwise those positions encode to [UNK] and decode lossily.
-        all_chars: Set[str] = set()
-        for word in word_counts:
-            all_chars.update(word)
-        sorted_chars = sorted(all_chars)
+        # Ideally every character that appears anywhere is in the vocabulary,
+        # so no position ever encodes to [UNK]. But a large, script-diverse web
+        # corpus can contain more distinct characters than the target vocab
+        # has room for at all - one real run hit over 4,096 distinct code
+        # points (Greek and math symbols, mojibake, private-use glyphs from
+        # scientific-web scrapes) and crashed outright with no merges learned
+        # and no tokenizer produced. Fit what the budget allows instead:
+        # weight each character by how often it actually occurs, and keep the
+        # most common ones first, so a handful of one-off garbled bytes lose
+        # out to the alphabet and punctuation that make up the vast majority
+        # of the text. Whatever doesn't fit falls back to [UNK] at encode
+        # time, same as any character this training run never saw at all.
+        char_counts: Counter = Counter()
+        for word, count in word_counts.items():
+            for ch, occurrences in Counter(word).items():
+                char_counts[ch] += occurrences * count
+
+        budget = self._target_vocab_size - vocab.size
+        if budget <= 0:
+            raise TokenizerError(
+                f"target_vocab_size={self._target_vocab_size} leaves no room "
+                f"for characters after {vocab.size} special tokens; raise "
+                f"target_vocab_size."
+            )
+
+        ranked = [ch for ch, _ in char_counts.most_common()]
+        sorted_chars = sorted(ranked[:budget])
+        dropped = len(ranked) - len(sorted_chars)
+        if dropped > 0:
+            logger.warning(
+                f"Corpus has {len(ranked)} distinct characters but only "
+                f"{budget} fit target_vocab_size={self._target_vocab_size}; "
+                f"dropping the {dropped} rarest (they will encode to [UNK]). "
+                f"Raise --vocab-size for full character coverage."
+            )
         vocab.add_tokens(sorted_chars)
 
         splits: Dict[str, List[str]] = {word: list(word) for word in word_counts}

@@ -3,6 +3,8 @@
 import tempfile
 import os
 import json
+import pytest
+from ..core.errors import TokenizerError
 from ..tokenizer.vocabulary import Vocabulary
 from ..tokenizer.bpe import BPETokenizer
 from ..tokenizer.trainer import TokenizerTrainer
@@ -163,3 +165,64 @@ class TestTokenizerTrainer:
             assert original_ids == loaded_ids
         finally:
             os.unlink(path)
+
+    def test_character_budget_exceeded_degrades_instead_of_crashing(self):
+        """A large, script-diverse corpus can contain more distinct characters
+        than a small target vocabulary has room for at all - one real run hit
+        over 4,096 distinct code points from a web-scraped scientific corpus
+        and crashed outright, with no tokenizer produced. Training must fit
+        what the budget allows rather than raise.
+        """
+        common = "the quick brown fox jumps over the lazy dog runs away "
+        # 15 characters that appear exactly once each - the ones that must lose
+        # out to the alphabet above when the budget can't hold everything.
+        rare = "".join(chr(0x0391 + i) for i in range(15))
+        text = common * 500 + " ".join(rare)
+
+        trainer = TokenizerTrainer(target_vocab_size=25, min_frequency=1)
+        tokenizer = trainer.train(iter([text]), verbose=False)
+
+        assert tokenizer.vocab_size == 25
+        # Coverage exists for what fit the budget...
+        ids = tokenizer.encode("the quick brown fox", add_special_tokens=False)
+        assert tokenizer.decode(ids, skip_special_tokens=True) == "the quick brown fox"
+        # ...and what didn't degrades to [UNK] instead of raising.
+        dropped_ids = tokenizer.encode(rare[0], add_special_tokens=False)
+        assert dropped_ids  # produced *something*, did not crash
+
+    def test_character_selection_prefers_frequent_characters(self):
+        """When characters must be dropped to fit the budget, the ones kept
+        must be the ones that actually appear often - dropping by frequency,
+        not by first-seen order or sort order.
+
+        target_vocab_size=6 leaves exactly one character slot after the 5
+        default special tokens, so this pins the tie-break directly: 'e'
+        (frequency 20) must win it over ' ' and 'z' (frequency 1 each).
+        """
+        text = "eeeeeeeeeeeeeeeeeeee z"
+        trainer = TokenizerTrainer(target_vocab_size=6, min_frequency=1)
+        tokenizer = trainer.train(iter([text]), verbose=False)
+
+        assert tokenizer.vocab_size == 6
+
+        e_ids = tokenizer.encode("e", add_special_tokens=False)
+        z_ids = tokenizer.encode("z", add_special_tokens=False)
+
+        # 'e' earned the one available slot and gets a real token; 'z' lost
+        # out and falls back to [UNK] - so the two must not be the same id.
+        assert e_ids != z_ids
+
+    def test_vocab_with_zero_room_for_characters_raises_a_clear_error(self):
+        """Not every failure should be swallowed by the graceful-degradation
+        path: a target_vocab_size that exactly fits the special tokens and
+        nothing else leaves zero budget for even one character, which is a
+        real misconfiguration distinct from "corpus has too many characters"
+        and should say so plainly.
+
+        target_vocab_size=5 exactly fits the 5 default special tokens (that
+        much succeeds), leaving budget = 0 for characters - the boundary this
+        test pins down.
+        """
+        trainer = TokenizerTrainer(target_vocab_size=5, min_frequency=1)
+        with pytest.raises(TokenizerError, match="leaves no room"):
+            trainer.train(iter(["hello world"]), verbose=False)
