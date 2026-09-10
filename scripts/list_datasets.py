@@ -92,7 +92,7 @@ def tag_value(tags, prefix):
     return None
 
 
-def usable(entry, language):
+def usable(entry, language, prose_only=False):
     """Keep datasets that plausibly contain running text in the right language."""
     tags = entry.get("tags") or []
 
@@ -114,6 +114,11 @@ def usable(entry, language):
         or any(t in TEXT_TASKS for t in tasks)
     )
     if not is_text:
+        return False
+
+    # Pretraining wants running prose. Benchmarks of question/answer pairs are
+    # text but teach a language model little about continuing a sentence.
+    if prose_only and not any(t in PROSE_TASKS for t in tasks):
         return False
 
     if language:
@@ -152,6 +157,11 @@ def main() -> None:
     parser.add_argument("--sort", default="downloads", choices=["downloads", "likes", "lastModified"])
     parser.add_argument("--out", default=None, help="Write the catalogue as JSON")
     parser.add_argument("--show", type=int, default=30, help="Rows to print")
+    parser.add_argument(
+        "--prose-only", action="store_true",
+        help="Keep only datasets tagged for text generation or similar - "
+             "running prose rather than question/answer benchmarks.",
+    )
     args = parser.parse_args()
 
     params = {"sort": args.sort, "direction": "-1", "full": "true"}
@@ -172,7 +182,7 @@ def main() -> None:
         for entry in rows:
             if len(kept) >= args.limit:
                 break
-            if not usable(entry, args.language):
+            if not usable(entry, args.language, args.prose_only):
                 continue
             tags = entry.get("tags") or []
             size_tag = tag_value(tags, "size_categories:")

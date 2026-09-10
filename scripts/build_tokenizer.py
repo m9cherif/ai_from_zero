@@ -21,10 +21,23 @@ def find_corpus(patterns):
     return [p for p in paths if os.path.isfile(p)]
 
 
-def read_texts(paths):
+def read_texts(paths, max_chars: int = 0):
+    """Yield file contents, optionally stopping after max_chars in total.
+
+    A vocabulary is fitted on a sample, not the whole corpus: BPE training cost
+    grows with the text it sees, and merges learned from 20 MB are effectively
+    the same as merges learned from 20 GB. Reading everything would turn a
+    two-minute step into hours.
+    """
+    budget = max_chars or float("inf")
+    per_file = (max_chars // max(len(paths), 1)) if max_chars else None
     for path in paths:
+        if budget <= 0:
+            return
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            yield f.read()
+            text = f.read(per_file) if per_file else f.read()
+        budget -= len(text)
+        yield text
 
 
 def main() -> None:
@@ -34,6 +47,12 @@ def main() -> None:
     parser.add_argument("--type", choices=["char", "bpe"], default="char")
     parser.add_argument("--vocab-size", type=int, default=4096)
     parser.add_argument("--min-frequency", type=int, default=2)
+    parser.add_argument(
+        "--max-chars", type=int, default=200_000_000,
+        help="Characters of corpus to fit the vocabulary on, spread across "
+             "files. 0 uses everything, which on a multi-gigabyte corpus takes "
+             "hours for no gain.",
+    )
     args = parser.parse_args()
 
     paths = find_corpus(args.data)
@@ -45,13 +64,14 @@ def main() -> None:
     print(f"Corpus: {len(paths)} files, {total_mb:.1f} MB")
 
     if args.type == "char":
-        tokenizer = CharTokenizer.train(read_texts(paths), min_frequency=args.min_frequency)
+        tokenizer = CharTokenizer.train(read_texts(paths, args.max_chars),
+                                        min_frequency=args.min_frequency)
     else:
         trainer = TokenizerTrainer(
             target_vocab_size=args.vocab_size,
             min_frequency=args.min_frequency,
         )
-        tokenizer = trainer.train(read_texts(paths))
+        tokenizer = trainer.train(read_texts(paths, args.max_chars))
 
     tokenizer.save(args.output)
 

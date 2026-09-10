@@ -160,15 +160,37 @@ def hf_resolve_url(repo: str, path: str, revision: str = "main") -> str:
     return f"{HF_BASE}/datasets/{repo}/resolve/{revision}/{path}"
 
 
-def extract_text(path: str) -> str:
-    """Pull plain text out of .txt, .jsonl/.json or .parquet."""
-    if path.endswith(".txt"):
-        return open(path, encoding="utf-8", errors="replace").read()
+def extract_text_to(src: str, dst: str, limit_bytes: int = 0) -> int:
+    """Stream text out of .txt/.jsonl/.parquet into dst. Returns bytes written.
 
-    if path.endswith((".jsonl", ".json")):
-        chunks = []
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
+    Nothing is accumulated in memory: a 2 GB parquet expands to several GB of
+    text, and building that as one Python string is what exhausts a 30 GB
+    machine. Rows are written as they are read, and the writer stops once
+    limit_bytes is reached.
+    """
+    written = 0
+
+    def emit(handle, text):
+        nonlocal written
+        if not text:
+            return False
+        chunk = text if text.endswith("\n") else text + "\n"
+        handle.write(chunk)
+        written += len(chunk)
+        return bool(limit_bytes) and written >= limit_bytes
+
+    if src.endswith(".txt"):
+        with open(src, encoding="utf-8", errors="replace") as fin, \
+             open(dst, "w", encoding="utf-8") as fout:
+            for line in fin:
+                if emit(fout, line.rstrip("\n")):
+                    break
+        return written
+
+    if src.endswith((".jsonl", ".json")):
+        with open(src, encoding="utf-8", errors="replace") as fin, \
+             open(dst, "w", encoding="utf-8") as fout:
+            for line in fin:
                 line = line.strip()
                 if not line:
                     continue
@@ -176,40 +198,63 @@ def extract_text(path: str) -> str:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(row, dict):
-                    # Field name varies by dataset; take the first long string.
-                    for key in ("text", "content", "raw_content", "story", "document"):
-                        if isinstance(row.get(key), str):
-                            chunks.append(row[key])
-                            break
-                    else:
-                        longest = max((v for v in row.values() if isinstance(v, str)),
-                                      key=len, default="")
-                        if len(longest) > 40:
-                            chunks.append(longest)
-                elif isinstance(row, str):
-                    chunks.append(row)
-        return "\n\n".join(chunks)
+                text = pick_text(row)
+                if text and emit(fout, text):
+                    break
+        return written
 
-    if path.endswith(".parquet"):
+    if src.endswith(".parquet"):
         try:
-            import pandas as pd
+            import pyarrow.parquet as pq
         except ImportError:
-            print("  parquet needs pandas: pip install pandas pyarrow", file=sys.stderr)
-            return ""
-        frame = pd.read_parquet(path)
-        for key in ("text", "content", "raw_content", "story", "document"):
-            if key in frame.columns:
-                return "\n\n".join(str(v) for v in frame[key].dropna())
-        strings = [c for c in frame.columns if frame[c].dtype == object]
-        if not strings:
-            return ""
-        return "\n\n".join(str(v) for v in frame[strings[0]].dropna())
+            print("  parquet needs pyarrow: pip install pyarrow", file=sys.stderr)
+            return 0
+        parquet = pq.ParquetFile(src)
+        column = None
+        for candidate in TEXT_COLUMNS:
+            if candidate in parquet.schema_arrow.names:
+                column = candidate
+                break
+        if column is None:
+            strings = [n for n, t in zip(parquet.schema_arrow.names,
+                                         parquet.schema_arrow.types)
+                       if str(t) in ("string", "large_string")]
+            if not strings:
+                return 0
+            column = strings[0]
 
-    return ""
+        with open(dst, "w", encoding="utf-8") as fout:
+            stop = False
+            # Row groups, not the whole file: peak memory is one batch.
+            for batch in parquet.iter_batches(batch_size=1000, columns=[column]):
+                for value in batch.column(0).to_pylist():
+                    if value and emit(fout, str(value)):
+                        stop = True
+                        break
+                if stop:
+                    break
+        return written
+
+    return 0
 
 
-def fetch_hf(dest_dir, specs, urls, max_files, workers):
+TEXT_COLUMNS = ("text", "content", "raw_content", "story", "document", "article")
+
+
+def pick_text(row):
+    """The text field of a JSON row, by name where possible."""
+    if isinstance(row, str):
+        return row
+    if not isinstance(row, dict):
+        return ""
+    for key in TEXT_COLUMNS:
+        if isinstance(row.get(key), str):
+            return row[key]
+    longest = max((v for v in row.values() if isinstance(v, str)), key=len, default="")
+    return longest if len(longest) > 40 else ""
+
+
+def fetch_hf(dest_dir, specs, urls, max_files, workers, text_cap=0):
     """Download HuggingFace dataset files into dest_dir as .txt.
 
     Each spec is 'owner/dataset' or 'owner/dataset:path/inside/repo'. Without a
@@ -251,30 +296,39 @@ def fetch_hf(dest_dir, specs, urls, max_files, workers):
             raw = os.path.join(dest_dir, name)
             if not os.path.exists(raw):
                 continue
-            text = extract_text(raw)
+            # Land it as .txt so the rest of the pipeline treats it uniformly.
+            out_path = os.path.join(dest_dir, os.path.splitext(name)[0] + ".txt")
+            written = extract_text_to(raw, out_path, limit_bytes=text_cap)
             try:
                 os.remove(raw)
             except FileNotFoundError:
                 pass
-            if len(text) < 5000:
+            if written < 5000:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
                 continue
-            # Land it as .txt so the rest of the pipeline treats it uniformly.
-            with open(os.path.join(dest_dir, os.path.splitext(name)[0] + ".txt"),
-                      "w", encoding="utf-8") as out:
-                out.write(text)
             kept += 1
     print(f"  kept {kept} file(s)")
     return kept
 
 
 def select_within_budget(catalogue, budget_bytes, max_per_dataset,
-                         min_bytes=1_000_000, revision="main"):
+                         min_bytes=1_000_000, max_file_bytes=250_000_000,
+                         seed=None, revision="main"):
     """Walk a ranked catalogue and pick files until the byte budget is met.
 
     Sizes come from the Hub's tree listing, so the budget is enforced before
     anything is downloaded rather than discovered afterwards.
     """
+    import random
+    rng = random.Random(seed)
     chosen, total = [], 0
+    # Rank order still leads, but the head of the catalogue is shuffled so
+    # successive runs do not all start from the same dataset.
+    catalogue = list(catalogue)
+    head = catalogue[:max(8, max_per_dataset * 4)]
+    rng.shuffle(head)
+    catalogue = head + catalogue[len(head):]
     for entry in catalogue:
         if total >= budget_bytes:
             break
@@ -285,15 +339,16 @@ def select_within_budget(catalogue, budget_bytes, max_per_dataset,
             continue
         if not files:
             continue
-        # Largest first, taking the first that still fits. Smallest-first
-        # spends the budget on kilobyte fragments - judge prompts, tiny
-        # benchmark shards - and never reaches the prose.
-        files.sort(key=lambda pair: -pair[1])
+        # Keep only moderate files, then shuffle. One 2 GB shard would swallow
+        # the whole budget, and taking the largest deterministically means every
+        # run trains on the same shard of the same dataset.
+        files = [(p, sz) for p, sz in files if min_bytes <= sz <= max_file_bytes]
+        rng.shuffle(files)
         taken = 0
         for path, size in files:
             if taken >= max_per_dataset or total >= budget_bytes:
                 break
-            if size < min_bytes or total + size > budget_bytes:
+            if total + size > budget_bytes:
                 continue
             chosen.append((repo, path, size))
             total += size
@@ -370,6 +425,19 @@ def main() -> None:
              "Roughly 3.7 chars per token, so 500 MB is about 135M tokens.",
     )
     parser.add_argument(
+        "--max-file-mb", type=float, default=250.0,
+        help="Skip files larger than this. One multi-gigabyte shard would take "
+             "the whole budget and expand to more text than RAM holds.",
+    )
+    parser.add_argument(
+        "--text-cap-mb", type=float, default=400.0,
+        help="Stop extracting a single file after this much text.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Fixes which shards are chosen. Omit for a different mix each run.",
+    )
+    parser.add_argument(
         "--min-file-mb", type=float, default=1.0,
         help="Ignore files smaller than this - benchmark shards and prompt "
              "fragments are text but not prose.",
@@ -396,7 +464,9 @@ def main() -> None:
         budget = int(args.budget_mb * 1e6)
         picked, total = select_within_budget(
             catalogue, budget, args.max_per_dataset,
-            min_bytes=int(args.min_file_mb * 1e6))
+            min_bytes=int(args.min_file_mb * 1e6),
+            max_file_bytes=int(args.max_file_mb * 1e6),
+            seed=args.seed)
         print(f"Budget {args.budget_mb:.0f} MB -> {len(picked)} files, "
               f"{total/1e6:.1f} MB, ~{total/3.7/1e6:.0f}M tokens")
         for repo, path, size in picked:
@@ -404,7 +474,8 @@ def main() -> None:
         hf_specs += [f"{repo}:{path}" for repo, path, _ in picked]
 
     if hf_specs or args.hf_url:
-        fetch_hf(staging, hf_specs, args.hf_url, args.hf_max_files, args.workers)
+        fetch_hf(staging, hf_specs, args.hf_url, args.hf_max_files, args.workers,
+                 text_cap=int(args.text_cap_mb * 1e6))
 
     jobs = [] if args.skip_gutenberg else list(SOURCES)
     if not args.skip_gutenberg:
