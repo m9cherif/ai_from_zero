@@ -63,7 +63,7 @@ def build_config(args, vocab_size: int) -> TrainConfig:
         checkpoint={
             "save_dir": args.output,
             "save_every_steps": args.save_every or max(args.steps // 4, 100),
-            "keep_last_n": 3,
+            "keep_last_n": args.keep_last_n,
         },
         logging={"log_every_steps": args.log_every},
         hardware={
@@ -101,6 +101,13 @@ def main() -> None:
     parser.add_argument("--n-layers", type=int, default=None, help="Override the preset's depth")
     parser.add_argument("--d-model", type=int, default=None, help="Override the preset's width")
     parser.add_argument("--save-every", type=int, default=None, help="Checkpoint interval in steps")
+    parser.add_argument(
+        "--keep-last-n", type=int, default=3,
+        help="Rotating step checkpoints to keep, plus checkpoint_latest.pt and "
+             "checkpoint_best.pt always kept separately. Each file is a full "
+             "copy of the model - 3.5 GB for the xl preset - so on a "
+             "disk-constrained machine (a free Kaggle session, say) lower this.",
+    )
     parser.add_argument(
         "--cache-dir", default=None,
         help="Tokenize the corpus once into this directory and train from the "

@@ -73,6 +73,14 @@ class CheckpointManager:
         elif step is None:
             step = 0
 
+        # Rotate before writing, not after: cleanup used to run only once a
+        # save had already succeeded, so on a nearly-full disk the write that
+        # needed the freed space failed before cleanup ever got a chance to
+        # run. A model this size (3.5 GB/checkpoint) can fill keep_last_n
+        # slots and leave zero room for the next save; freeing the oldest
+        # ones first gives that save somewhere to land.
+        self._cleanup_old_checkpoints()
+
         # Serialize
         path = self._checkpoint_path(step)
         saved_path = CheckpointSerializer.save(
@@ -98,6 +106,10 @@ class CheckpointManager:
             shutil.copyfile(str(path), str(self.best_checkpoint_path()))
             logger.info(f"New best checkpoint at step {step}")
 
+        # Rotate again now that the new file exists, trimming back down to
+        # keep_last_n rather than leaving it at +1 until the next save. This
+        # is a second cheap glob-and-delete, not a second write of a 3.5 GB
+        # file, so it costs nothing worth avoiding.
         self._cleanup_old_checkpoints()
 
         self._last_save_step = step

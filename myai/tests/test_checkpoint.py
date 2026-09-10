@@ -3,6 +3,7 @@
 import tempfile
 import os
 from pathlib import Path
+import pytest
 import torch
 from ..checkpoint.serializer import CheckpointSerializer
 from ..checkpoint.manager import CheckpointManager
@@ -122,3 +123,47 @@ class TestBestCheckpoint:
             best = manager.resume_from_best()["model_state_dict"]
             latest = manager.resume_from_latest()["model_state_dict"]
             assert not torch.allclose(best["embedding.weight"], latest["embedding.weight"])
+
+    def test_rotation_runs_before_the_write_it_makes_room_for(self):
+        """A run once filled every rotation slot with 3.5 GB checkpoints and
+        then had its next save fail outright: cleanup ran only after a
+        successful write, so on a nearly-full disk the write that needed the
+        freed space never got the chance to free it. Rotation now runs both
+        before the write (so it never depends on that write having already
+        succeeded) and after (to keep the usual steady-state cap intact)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = CheckpointManager(save_dir=tmpdir, save_every_steps=1, keep_last_n=1)
+            model = self._model()
+
+            for step in [10, 20, 30, 40]:
+                manager.save(model=model, config=TrainConfig(), step=step)
+                assert len(manager.list_checkpoints()) <= 1
+
+            assert not (Path(tmpdir) / "checkpoint_step_10.pt").exists()
+            assert not (Path(tmpdir) / "checkpoint_step_20.pt").exists()
+            assert not (Path(tmpdir) / "checkpoint_step_30.pt").exists()
+
+    def test_failed_save_does_not_leave_a_partial_file(self, monkeypatch):
+        """The proximate cause of a real incident: torch.save failed mid-write
+        (disk full) and the corrupted .tmp file it left behind was never
+        cleaned up, permanently occupying the space that made it fail. It
+        must be removed, and the manager must still work normally afterward -
+        a bad save should not corrupt the ones that come after it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = CheckpointManager(save_dir=tmpdir, save_every_steps=1, keep_last_n=3)
+            model = self._model()
+
+            from myai.checkpoint import serializer as serializer_module
+            monkeypatch.setattr(
+                serializer_module.torch, "save",
+                lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")),
+            )
+            with pytest.raises(RuntimeError, match="disk full"):
+                manager.save(model=model, config=TrainConfig(), step=1)
+
+            assert list(Path(tmpdir).glob("*.tmp")) == []
+            assert not (Path(tmpdir) / "checkpoint_step_1.pt").exists()
+
+            monkeypatch.undo()
+            manager.save(model=model, config=TrainConfig(), step=2)
+            assert (Path(tmpdir) / "checkpoint_step_2.pt").exists()

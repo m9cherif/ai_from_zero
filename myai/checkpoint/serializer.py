@@ -59,7 +59,17 @@ class CheckpointSerializer:
 
         # Save with atomic write
         temp_path = str(path) + ".tmp"
-        torch.save(checkpoint, temp_path)
+        try:
+            torch.save(checkpoint, temp_path)
+        except Exception:
+            # A save that fails partway (typically disk-full on a checkpoint
+            # this size) leaves a truncated, unusable .tmp file behind. Left
+            # in place it does nothing but hold the space that made the save
+            # fail in the first place, hostile to exactly the situation it
+            # occurs in - so remove it rather than let it linger.
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
         os.replace(temp_path, str(path))
 
         size_mb = path.stat().st_size / (1024 * 1024)
